@@ -1,0 +1,9 @@
+# 示例视频URL列表
+# 每行一个URL，以#开头的行会被忽略
+
+# B站技术视频
+https://www.bilibili.com/video/BV1uH4y1H7JN/
+
+# 如果有更多视频，继续添加：
+# https://www.bilibili.com/video/BVxxxxxx/
+# https://www.xiaohongshu.com/explore/xxxxxx

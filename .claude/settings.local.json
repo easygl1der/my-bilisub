@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(conda activate:*)",
+      "Bash(pip install:*)",
+      "Bash(dir:*)",
+      "Bash(cmd:*)",
+      "Bash(E:\\\\Anaconda\\\\envs\\\\bilisub\\\\python.exe:*)",
+      "Bash(ls:*)",
+      "Bash(if:*)",
+      "Bash(then cat config.json)",
+      "Bash(else echo \"No config.json found\")",
+      "Bash(fi)"
+    ]
+  }
+}

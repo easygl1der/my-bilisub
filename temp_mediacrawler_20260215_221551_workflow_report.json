@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-02-15 22:16:35",
+  "total_videos": 1,
+  "successful": 1,
+  "failed": 0,
+  "total_time": 44.0595006942749,
+  "results": [
+    {
+      "url": "https://www.xiaohongshu.com/explore/698da913000000000b00a3f1",
+      "title": "尊重前额叶🧠手把手教学",
+      "success": true,
+      "error": null,
+      "whisper_time": 6.115634441375732,
+      "optimize_time": 37.941697120666504,
+      "total_time": 44.0595006942749
+    }
+  ]
+}

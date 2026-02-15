@@ -1,0 +1,401 @@
+#!/usr/bin/env python3
+"""
+CSV视频批量处理工作流 - 一体化工具
+
+功能：
+1. 从CSV文件读取视频列表
+2. 自动过滤指定状态的视频
+3. 批量处理：下载 → Whisper → GLM优化
+4. 更新CSV处理状态
+"""
+
+import os
+import sys
+import csv
+import time
+import json
+from pathlib import Path
+from datetime import datetime
+import subprocess
+import shutil
+
+# Windows编码修复
+if sys.platform == 'win32':
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+
+
+def read_csv_with_filter(csv_file, status_filter=None):
+    """
+    从CSV读取视频并过滤
+
+    Args:
+        csv_file: CSV文件路径
+        status_filter: 状态过滤器（None=全部, 'success'=只成功的, 'fail'=只失败的）
+
+    Returns:
+        list: 视频信息列表
+    """
+    videos = []
+
+    with open(csv_file, 'r', encoding='utf-8-sig') as f:
+        reader = csv.DictReader(f)
+
+        for row in reader:
+            # 跳过没有链接的行
+            if not row.get('链接'):
+                continue
+
+            # 状态过滤
+            if status_filter:
+                current_status = row.get('subtitle_status', '').strip().lower()
+                if status_filter == 'success' and current_status != 'success':
+                    continue
+                elif status_filter == 'fail' and current_status != 'fail':
+                    continue
+
+            videos.append({
+                'index': row.get('序号', ''),
+                'title': row.get('标题', ''),
+                'url': row['链接'],
+                'type': row.get('类型', 'video'),
+                'likes': row.get('点赞数', ''),
+                'comments': row.get('评论数', ''),
+                'publish_time': row.get('发布时间', ''),
+                'status': row.get('subtitle_status', ''),
+                'error': row.get('subtitle_error', '')
+            })
+
+    return videos
+
+
+def process_single_video(video_info, model='medium', prompt='optimization'):
+    """
+    处理单个视频
+
+    Returns:
+        dict: 处理结果
+    """
+    url = video_info['url']
+
+    result = {
+        'url': url,
+        'title': video_info['title'],
+        'success': False,
+        'error': None,
+        'whisper_time': 0,
+        'optimize_time': 0,
+        'total_time': 0
+    }
+
+    print(f"\n{'='*80}")
+    print(f"🎬 处理视频: {video_info['title']}")
+    print(f"📎 URL: {url[:80]}...")
+    print(f"{'='*80}")
+
+    start_time = time.time()
+
+    try:
+        # 步骤1：Whisper识别
+        print("\n📝 步骤 1/2: Whisper语音识别...")
+        whisper_start = time.time()
+
+        cmd = [
+            'python', 'ultimate_transcribe.py',
+            '-u', url,
+            '--model', model,
+            '--no-ocr'
+        ]
+
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding='utf-8',
+            timeout=1800
+        )
+
+        result['whisper_time'] = time.time() - whisper_start
+
+        if proc.returncode != 0:
+            result['error'] = f"Whisper失败"
+            print(f"❌ {result['error']}")
+            return result
+
+        print(f"✅ Whisper完成 (耗时: {result['whisper_time']:.1f}秒)")
+
+        # 查找SRT文件
+        import glob
+        srt_files = glob.glob('output/transcripts/*.srt')
+        if not srt_files:
+            result['error'] = "未找到SRT文件"
+            print(f"❌ {result['error']}")
+            return result
+
+        srt_file = max(srt_files, key=os.path.getmtime)
+        print(f"📄 字幕文件: {os.path.basename(srt_file)}")
+
+        # 步骤2：GLM优化
+        print("\n🤖 步骤 2/2: GLM字幕优化...")
+        print(f"   模式: {prompt}")
+
+        optimize_start = time.time()
+        cmd = [
+            'python', 'optimize_srt_glm.py',
+            '-s', srt_file,
+            '-p', prompt
+        ]
+
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding='utf-8',
+            timeout=300
+        )
+
+        result['optimize_time'] = time.time() - optimize_start
+
+        if proc.returncode != 0:
+            print(f"⚠️  GLM优化失败，但保留了原始字幕")
+            print(f"   原因: {proc.stderr[-100:]}")
+        else:
+            print(f"✅ GLM优化完成 (耗时: {result['optimize_time']:.1f}秒)")
+
+        result['success'] = True
+        result['total_time'] = time.time() - start_time
+
+        print(f"\n✅ 处理完成! 总耗时: {result['total_time']:.1f}秒")
+
+    except subprocess.TimeoutExpired:
+        result['error'] = "处理超时"
+        print(f"❌ {result['error']}")
+    except Exception as e:
+        result['error'] = str(e)
+        print(f"❌ 处理出错: {e}")
+
+    return result
+
+
+def update_csv_status(csv_file, processed_results):
+    """
+    更新CSV文件的处理状态
+
+    Args:
+        csv_file: 原CSV文件
+        processed_results: 处理结果列表
+    """
+    # 备份原文件
+    backup_file = csv_file.replace('.csv', f'_backup_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv')
+    shutil.copy2(csv_file, backup_file)
+    print(f"\n💾 原文件已备份到: {backup_file}")
+
+    # 读取原数据
+    with open(csv_file, 'r', encoding='utf-8-sig') as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+        fieldnames = reader.fieldnames
+
+    # 创建URL到结果的映射
+    url_to_result = {}
+    for result in processed_results:
+        url_to_result[result['url']] = result
+
+    # 更新状态
+    for row in rows:
+        url = row.get('链接', '')
+        if url in url_to_result:
+            result = url_to_result[url]
+            if result['success']:
+                row['subtitle_status'] = 'success'
+                row['subtitle_error'] = ''
+            else:
+                row['subtitle_status'] = 'fail'
+                row['subtitle_error'] = result.get('error', 'Unknown error')
+
+    # 写入更新后的CSV
+    output_file = csv_file.replace('.csv', '_processed.csv')
+    with open(output_file, 'w', encoding='utf-8-sig', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+    print(f"✅ 更新后的CSV已保存: {output_file}")
+
+
+def save_workflow_report(videos, results, output_file):
+    """保存工作流报告"""
+    report = {
+        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'total_videos': len(videos),
+        'successful': sum(1 for r in results if r['success']),
+        'failed': sum(1 for r in results if not r['success']),
+        'total_time': sum(r['total_time'] for r in results),
+        'results': results
+    }
+
+    # JSON报告
+    json_file = output_file.replace('.md', '.json')
+    with open(json_file, 'w', encoding='utf-8') as f:
+        json.dump(report, f, ensure_ascii=False, indent=2)
+
+    # Markdown报告
+    with open(output_file, 'w', encoding='utf-8') as f:
+        f.write(f"# CSV视频处理工作流报告\n\n")
+        f.write(f"**时间**: {report['timestamp']}\n\n")
+        f.write(f"## 📊 总体统计\n\n")
+        f.write(f"- 总视频数: {report['total_videos']}\n")
+        f.write(f"- 成功: {report['successful']}\n")
+        f.write(f"- 失败: {report['failed']}\n")
+        f.write(f"- 总耗时: {report['total_time']:.1f}秒 ({report['total_time']/60:.1f}分钟)\n")
+        f.write(f"- 平均: {report['total_time']/len(results):.1f}秒/视频\n\n")
+
+        f.write(f"## 📝 详细结果\n\n")
+
+        for i, (video, result) in enumerate(zip(videos, results), 1):
+            status = "✅ 成功" if result['success'] else "❌ 失败"
+            f.write(f"### {i}. {video['title']}\n\n")
+            f.write(f"**状态**: {status}\n\n")
+            f.write(f"- URL: {video['url'][:80]}...\n")
+            f.write(f"- Whisper耗时: {result['whisper_time']:.1f}秒\n")
+            f.write(f"- GLM优化耗时: {result['optimize_time']:.1f}秒\n")
+            f.write(f"- 总耗时: {result['total_time']:.1f}秒\n")
+            if result['error']:
+                f.write(f"- 错误: {result['error']}\n")
+            f.write("\n")
+
+    print(f"\n📊 报告已保存:")
+    print(f"   JSON: {json_file}")
+    print(f"   Markdown: {output_file}")
+
+
+def main():
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="CSV视频批量处理工作流",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+使用示例:
+
+1. 处理CSV中的所有视频:
+   python process_csv_workflow.py 杨雨坤-Yukun.csv
+
+2. 只处理成功的视频:
+   python process_csv_workflow.py 杨雨坤-Yukun.csv --filter success
+
+3. 只处理失败的视频:
+   python process_csv_workflow.py 杨雨坤-Yukun.csv --filter fail
+
+4. 指定模型和优化模式:
+   python process_csv_workflow.py videos.csv --model medium --prompt tech
+
+5. 处理前3个视频:
+   python process_csv_workflow.py videos.csv --limit 3
+        """
+    )
+
+    parser.add_argument('csv_file', help='CSV文件路径')
+    parser.add_argument(
+        '--filter',
+        choices=['all', 'success', 'fail'],
+        default='all',
+        help='过滤视频状态（默认: all）'
+    )
+    parser.add_argument(
+        '--model',
+        default='medium',
+        choices=['tiny', 'base', 'small', 'medium', 'large'],
+        help='Whisper模型（默认: medium）'
+    )
+    parser.add_argument(
+        '--prompt',
+        default='optimization',
+        choices=['optimization', 'simple', 'conservative', 'aggressive', 'tech', 'interview', 'vlog'],
+        help='GLM优化模式（默认: optimization）'
+    )
+    parser.add_argument(
+        '--limit',
+        type=int,
+        default=0,
+        help='限制处理数量（0=全部）'
+    )
+    parser.add_argument(
+        '--no-update',
+        action='store_true',
+        help='不更新CSV文件'
+    )
+
+    args = parser.parse_args()
+
+    # 读取视频列表
+    print(f"📖 从CSV读取视频列表: {args.csv_file}")
+    print(f"🔍 过滤条件: {args.filter}")
+
+    status_filter = None if args.filter == 'all' else args.filter
+    videos = read_csv_with_filter(args.csv_file, status_filter)
+
+    if not videos:
+        print("❌ 未找到符合条件的视频")
+        return
+
+    # 限制数量
+    if args.limit > 0:
+        videos = videos[:args.limit]
+        print(f"⚠️  限制处理数量为: {args.limit}")
+
+    print(f"✅ 找到 {len(videos)} 个视频")
+    print(f"\n配置:")
+    print(f"  Whisper模型: {args.model}")
+    print(f"  GLM优化: {args.prompt}")
+    print(f"  更新CSV: {'否' if args.no_update else '是'}")
+    print(f"\n开始处理...\n")
+
+    # 批量处理
+    results = []
+    for i, video in enumerate(videos, 1):
+        print(f"\n{'#'*80}")
+        print(f"# 进度: [{i}/{len(videos)}]")
+        print(f"{'#'*80}")
+
+        result = process_single_video(
+            video,
+            model=args.model,
+            prompt=args.prompt
+        )
+
+        results.append(result)
+
+        # 等待一下再处理下一个
+        if i < len(videos):
+            print("\n⏳ 等待3秒后处理下一个视频...")
+            time.sleep(3)
+
+    # 保存报告
+    print(f"\n{'='*80}")
+    print("🎉 批量处理完成!")
+    print(f"{'='*80}")
+
+    report_file = args.csv_file.replace('.csv', '_workflow_report.md')
+    save_workflow_report(videos, results, report_file)
+
+    # 更新CSV
+    if not args.no_update:
+        update_csv_status(args.csv_file, results)
+
+    # 打印总结
+    successful = sum(1 for r in results if r['success'])
+    failed = len(results) - successful
+    total_time = sum(r['total_time'] for r in results)
+
+    print(f"\n📊 处理总结:")
+    print(f"   总数: {len(results)}")
+    print(f"   成功: {successful}")
+    print(f"   失败: {failed}")
+    print(f"   总耗时: {total_time:.1f}秒 ({total_time/60:.1f}分钟)")
+    print(f"   平均: {total_time/len(results):.1f}秒/视频")
+
+
+if __name__ == "__main__":
+    main()
