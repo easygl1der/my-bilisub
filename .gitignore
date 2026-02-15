@@ -8,6 +8,9 @@ __pycache__/
 
 # 个人配置文件
 config.json
+config_*.py
+*_secrets.py
+api_keys.py
 
 # 输出目录
 output/
