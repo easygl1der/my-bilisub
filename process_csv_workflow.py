@@ -214,14 +214,13 @@ def update_csv_status(csv_file, processed_results):
                 row['subtitle_status'] = 'fail'
                 row['subtitle_error'] = result.get('error', 'Unknown error')
 
-    # 写入更新后的CSV
-    output_file = csv_file.replace('.csv', '_processed.csv')
-    with open(output_file, 'w', encoding='utf-8-sig', newline='') as f:
+    # 写入更新后的CSV（直接覆盖原文件）
+    with open(csv_file, 'w', encoding='utf-8-sig', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
 
-    print(f"✅ 更新后的CSV已保存: {output_file}")
+    print(f"✅ CSV文件已更新: {csv_file}")
 
 
 def save_workflow_report(videos, results, output_file):
@@ -355,10 +354,17 @@ def main():
     # 批量处理
     results = []
     for i, video in enumerate(videos, 1):
-        print(f"\n{'#'*80}")
-        print(f"# 进度: [{i}/{len(videos)}]")
-        print(f"{'#'*80}")
-
+        # 显示进度
+        progress_pct = (i / len(videos)) * 100
+        print(f"\n\n")
+        print(f"{"#" * 80}")
+        print(f"# {"🎬" * 20}")
+        print(f"{"#" * 80}")
+        print(f"# 进度: [{i}/{len(videos)}] {progress_pct:.1f}%")
+        print(f"# 当前: {video["title"]}")
+        print(f"{"#" * 80}")
+        print(f"# 剩余: {len(videos) - i} 个视频")
+        print(f"{"#" * 80}\n")
         result = process_single_video(
             video,
             model=args.model,
@@ -377,7 +383,9 @@ def main():
     print("🎉 批量处理完成!")
     print(f"{'='*80}")
 
-    report_file = args.csv_file.replace('.csv', '_workflow_report.md')
+    # 生成报告文件名（基于原CSV名）
+    base_name = args.csv_file.replace('_processed.csv', '').replace('.csv', '')
+    report_file = f'{base_name}_workflow_report.md' 
     save_workflow_report(videos, results, report_file)
 
     # 更新CSV
