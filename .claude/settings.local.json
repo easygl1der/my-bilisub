@@ -11,7 +11,16 @@
       "Bash(if:*)",
       "Bash(then cat config.json)",
       "Bash(else echo \"No config.json found\")",
-      "Bash(fi)"
+      "Bash(fi)",
+      "Bash(git remote set-url:*)",
+      "Bash(git push:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(yt-dlp:*)",
+      "Bash(ffprobe:*)",
+      "Bash(Get-Command python*)",
+      "Bash(Select-Object:*)",
+      "Bash(conda install:*)"
     ]
   }
 }
