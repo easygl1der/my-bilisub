@@ -20,7 +20,8 @@
       "Bash(ffprobe:*)",
       "Bash(Get-Command python*)",
       "Bash(Select-Object:*)",
-      "Bash(conda install:*)"
+      "Bash(conda install:*)",
+      "Bash(git reset:*)"
     ]
   }
 }

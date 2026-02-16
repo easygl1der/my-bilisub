@@ -1,12 +1,37 @@
-bilibili-api-python==17.1.2
-tenacity>=8.0.0
+# 视频下载和处理
+yt-dlp>=2023.0.0
 requests>=2.25.0
-aiohttp>=3.8.0
+beautifulsoup4>=4.12.0
+
+# 语音识别 (Whisper)
 openai-whisper>=20230918
+torch>=2.0.0
+torchaudio>=2.0.0
+
+# 字幕优化
+tenacity>=8.0.0
+
+# 进度显示
 tqdm>=4.60.0
+
+# B站 API
+bilibili-api-python>=17.1.0
+
+# 数据处理
+pandas>=2.0.0
+numpy>=1.24.0
+
+# 异步支持
+aiohttp>=3.8.0
+
+# API 服务
 fastapi>=0.100.0
 uvicorn>=0.22.0
 pydantic>=2.0.0
 python-multipart>=0.0.6
 starlette>=0.27.0
 email-validator>=2.0.0
+
+# 可选: OCR功能 (需要额外安装)
+# paddleocr>=2.7.0
+# opencv-python>=4.8.0
