@@ -22,3 +22,9 @@ env/
 .env/
 # Reports
 download_report.json
+
+# 下载的视频和图片
+downloaded_videos/
+*.mp4
+*.mp4.part
+一键下载.bat
