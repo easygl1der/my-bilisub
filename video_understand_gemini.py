@@ -31,9 +31,13 @@ import os
 import sys
 import time
 import json
+import csv
 import argparse
 from pathlib import Path
 from datetime import datetime
+from typing import List, Dict, Optional, Set
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 try:
     import google.generativeai as genai
@@ -64,6 +68,16 @@ GEMINI_MODELS = {
     'flash': 'gemini-2.5-flash',             # 5 RPM, 100 RPD
     'pro': 'gemini-2.5-pro',                 # 10 RPM, 100 RPD
 }
+
+# 并发限制（根据免费版RPM限制设置，留有余量）
+MAX_CONCURRENT = {
+    'flash-lite': 10,   # 15 RPM -> 安全值 10
+    'flash': 3,         # 5 RPM -> 安全值 3
+    'pro': 6,           # 10 RPM -> 安全值 6
+}
+
+# 线程安全的打印锁
+print_lock = threading.Lock()
 
 # 默认提示词模板
 DEFAULT_PROMPTS = {
@@ -348,7 +362,7 @@ class VideoProcessor:
                 print(f"   └─ ✅ 处理完成! ({elapsed:.1f}秒)")
                 return True
 
-    def analyze_video(self, video_file: object, prompt: str, max_retries: int = 2) -> str:
+    def analyze_video(self, video_file: object, prompt: str, max_retries: int = 2) -> tuple:
         """
         分析视频内容
 
@@ -358,7 +372,7 @@ class VideoProcessor:
             max_retries: 最大重试次数（用于模型切换）
 
         Returns:
-            分析结果文本
+            (分析结果文本, token使用信息字典)
         """
         for attempt in range(max_retries + 1):
             if attempt > 0:
@@ -375,7 +389,19 @@ class VideoProcessor:
                     prompt
                 ])
 
-                return response.text
+                # 提取 token 使用信息
+                token_info = {
+                    'prompt_tokens': 0,
+                    'candidates_tokens': 0,
+                    'total_tokens': 0
+                }
+
+                if hasattr(response, 'usage_metadata') and response.usage_metadata:
+                    token_info['prompt_tokens'] = response.usage_metadata.prompt_token_count or 0
+                    token_info['candidates_tokens'] = response.usage_metadata.candidates_token_count or 0
+                    token_info['total_tokens'] = response.usage_metadata.total_token_count or 0
+
+                return response.text, token_info
 
             except Exception as e:
                 error_msg = str(e)
@@ -387,11 +413,11 @@ class VideoProcessor:
                     if attempt < max_retries and self._switch_model():
                         continue
                     else:
-                        return f"❌ 所有模型配额均不足或请求失败: {error_msg}"
+                        return f"❌ 所有模型配额均不足或请求失败: {error_msg}", {}
 
-                return f"❌ 分析失败: {error_msg}"
+                return f"❌ 分析失败: {error_msg}", {}
 
-        return "❌ 分析失败: 达到最大重试次数"
+        return "❌ 分析失败: 达到最大重试次数", {}
 
     def delete_file(self, video_file: object):
         """删除已上传的文件"""
@@ -430,9 +456,11 @@ def list_prompt_modes():
 
 # ==================== 输出管理 ====================
 
-def save_result(video_path: str, result: str, prompt: str, model: str, output_dir: str = "gemini_analysis"):
+def save_result(video_path: str, result: str, prompt: str, model: str,
+                 output_dir: str = "gemini_analysis", base_dir: str = None,
+                 token_info: dict = None) -> Path:
     """
-    保存分析结果
+    保存分析结果为Markdown格式，保持原有文件夹结构
 
     Args:
         video_path: 视频文件路径
@@ -440,38 +468,177 @@ def save_result(video_path: str, result: str, prompt: str, model: str, output_di
         prompt: 使用的提示词
         model: 使用的模型
         output_dir: 输出目录
+        base_dir: 基础目录（用于保持相对路径结构）
+        token_info: token 使用信息
     """
+    video_path = Path(video_path)
     output_path = Path(output_dir)
-    output_path.mkdir(parents=True, exist_ok=True)
 
-    video_name = Path(video_path).stem
+    # 计算相对路径，保持原有文件夹结构
+    if base_dir:
+        base_path = Path(base_dir)
+        try:
+            relative_path = video_path.relative_to(base_path)
+            # 如果视频在子目录中，保持该结构
+            if relative_path.parent != Path('.'):
+                output_subdir = output_path / relative_path.parent
+            else:
+                output_subdir = output_path
+        except ValueError:
+            # video_path 不在 base_dir 下，直接使用输出目录
+            output_subdir = output_path
+    else:
+        # 单视频模式，检查是否在子目录中
+        if video_path.parent.is_dir():
+            # 使用视频所在目录名作为子目录
+            output_subdir = output_path / video_path.parent.name
+        else:
+            output_subdir = output_path
+
+    output_subdir.mkdir(parents=True, exist_ok=True)
+
+    video_name = video_path.stem
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
 
-    result_file = output_path / f"{video_name}_{timestamp}.txt"
+    result_file = output_subdir / f"{video_name}_{timestamp}.md"
 
     with open(result_file, 'w', encoding='utf-8') as f:
-        f.write(f"Gemini 视频分析结果\n")
-        f.write(f"{'='*60}\n")
-        f.write(f"视频文件: {Path(video_path).name}\n")
-        f.write(f"分析时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        f.write(f"使用模型: {model}\n")
-        f.write(f"{'='*60}\n\n")
+        # Markdown 头部
+        f.write(f"# {video_name} - Gemini 视频分析\n\n")
 
-        f.write(f"提示词:\n{prompt}\n\n")
-        f.write(f"{'='*60}\n\n")
+        # 元信息表格
+        f.write(f"## 📌 元信息\n\n")
+        f.write(f"| 项目 | 内容 |\n")
+        f.write(f"|------|------|\n")
+        f.write(f"| **视频文件** | {video_path.name} |\n")
+        f.write(f"| **分析时间** | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} |\n")
+        f.write(f"| **使用模型** | {model} |\n")
 
-        f.write(f"分析结果:\n\n{result}\n")
+        # 如果有子目录，显示来源文件夹
+        if base_dir:
+            try:
+                relative_path = video_path.relative_to(Path(base_dir))
+                if relative_path.parent != Path('.'):
+                    f.write(f"| **来源文件夹** | `{relative_path.parent}` |\n")
+            except:
+                pass
+
+        # 添加 token 使用信息
+        if token_info and token_info.get('total_tokens', 0) > 0:
+            f.write(f"| **Token 使用** | 输入: {token_info.get('prompt_tokens', 0):,} | 输出: {token_info.get('candidates_tokens', 0):,} | **总计: {token_info.get('total_tokens', 0):,}** |\n")
+
+        f.write(f"\n---\n\n")
+
+        # 分析结果（直接是Markdown格式）
+        f.write(result)
+        f.write(f"\n")
 
     return result_file
+
+
+def load_completed_videos(output_dir: str) -> Set[str]:
+    """
+    加载已完成的视频列表
+
+    Args:
+        output_dir: 输出目录
+
+    Returns:
+        已完成的视频文件名集合（不含扩展名）
+    """
+    output_path = Path(output_dir)
+    completed = set()
+
+    if not output_path.exists():
+        return completed
+
+    # 扫描所有 .md 文件
+    for md_file in output_path.rglob("*.md"):
+        # 文件名格式: 视频名_时间戳.md
+        stem = md_file.stem  # 去掉 .md
+        # 去掉时间戳后缀 (_20260217_123456)
+        video_name = '_'.join(stem.split('_')[:-2]) if '_' in stem else stem
+        completed.add(video_name)
+
+    return completed
+
+
+def update_csv_status(csv_path: str, video_path: str, status: str, output_file: str = ""):
+    """
+    更新CSV文件中的视频状态（通过文件名匹配）
+
+    Args:
+        csv_path: CSV文件路径
+        video_path: 视频文件路径
+        status: 状态 (pending/processing/completed/failed)
+        output_file: 输出文件路径（可选）
+    """
+    csv_path = Path(csv_path)
+    video_name = Path(video_path).stem
+
+    if not csv_path.exists():
+        return False
+
+    try:
+        # 读取所有行
+        with open(csv_path, 'r', encoding='utf-8-sig') as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+            fieldnames = reader.fieldnames or []
+
+        # 检查是否有状态列，没有就添加
+        if '转录状态' not in fieldnames:
+            fieldnames.append('转录状态')
+        if '转录文件' not in fieldnames:
+            fieldnames.append('转录文件')
+
+        # 更新对应行的状态（通过文件名匹配）
+        updated = False
+        for row in rows:
+            title = row.get('标题', '') or row.get('title', '')
+            # 清理标题，用于匹配文件名
+            title_stem = sanitize_filename(title) if title else ""
+
+            if title_stem and title_stem in video_name:
+                row['转录状态'] = status
+                if output_file:
+                    row['转录文件'] = output_file
+                updated = True
+                break
+
+            # 也尝试通过链接匹配（如果CSV中存储的是视频路径）
+            row_url = row.get('链接', '') or row.get('url', '')
+            if row_url and str(video_path) in row_url:
+                row['转录状态'] = status
+                if output_file:
+                    row['转录文件'] = output_file
+                updated = True
+                break
+
+        if updated:
+            # 写回文件
+            with open(csv_path, 'w', encoding='utf-8-sig', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(rows)
+
+            return True
+
+    except Exception as e:
+        with print_lock:
+            print(f"   └─ ⚠️ 更新CSV状态失败: {e}")
+
+    return False
 
 
 # ==================== 批量处理 ====================
 
 def batch_analyze(video_dir: str, processor: VideoProcessor, prompt: str,
                   pattern: str = "*.mp4", keep_files: bool = False,
-                  output_dir: str = "gemini_analysis"):
+                  output_dir: str = "gemini_analysis", max_workers: int = None,
+                  csv_path: str = None, skip_completed: bool = True):
     """
-    批量分析目录下的视频
+    批量分析目录下的视频，保持原有文件夹结构（支持并发）
 
     Args:
         video_dir: 视频目录
@@ -480,6 +647,9 @@ def batch_analyze(video_dir: str, processor: VideoProcessor, prompt: str,
         pattern: 文件匹配模式
         keep_files: 是否保留上传的文件
         output_dir: 输出目录
+        max_workers: 最大并发数（None自动根据模型设置）
+        csv_path: CSV文件路径（用于更新状态）
+        skip_completed: 是否跳过已完成的视频
     """
     video_dir = Path(video_dir)
 
@@ -497,42 +667,128 @@ def batch_analyze(video_dir: str, processor: VideoProcessor, prompt: str,
         print(f"❌ 未找到视频文件 ({pattern})")
         return
 
-    print(f"\n📂 找到 {len(videos)} 个视频文件")
+    # 加载已完成的视频
+    completed = load_completed_videos(output_dir) if skip_completed else set()
 
-    results = []
-    success_count = 0
-    fail_count = 0
+    # 过滤已完成的视频
+    if completed and skip_completed:
+        original_count = len(videos)
+        videos = [v for v in videos if v.stem not in completed]
+        skipped = original_count - len(videos)
+        if skipped > 0:
+            print(f"⏭️ 跳过已完成的视频: {skipped} 个")
 
-    for i, video_path in enumerate(videos, 1):
-        print(f"\n{'='*80}")
-        print(f"[{i}/{len(videos)}] 处理: {video_path.name}")
-        print(f"{'='*80}")
+    if not videos:
+        print(f"✅ 所有视频都已处理完成！")
+        return
 
-        result = process_video(str(video_path), processor, prompt, keep_files, output_dir)
+    print(f"\n📂 找到 {len(videos)} 个待处理视频文件")
 
+    # 按文件夹分组显示
+    folders = {}
+    for v in videos:
+        folder = v.parent.name if v.parent != video_dir else "(根目录)"
+        if folder not in folders:
+            folders[folder] = []
+        folders[folder].append(v)
+
+    print(f"📁 文件夹分布:")
+    for folder, folder_videos in folders.items():
+        print(f"   - {folder}: {len(folder_videos)} 个视频")
+
+    # 确定并发数
+    if max_workers is None:
+        max_workers = MAX_CONCURRENT.get(processor.model, 3)
+
+    print(f"⚡ 并发模式: {max_workers} 个线程同时处理")
+    print(f"   └─ 预计时间: 约 {len(videos) // max_workers + 1} 轮")
+
+    if csv_path:
+        print(f"📋 CSV状态跟踪: {Path(csv_path).name}")
+
+    # 线程安全的计数器和存储
+    counter = {'value': 0, 'success': 0, 'fail': 0}
+    counter_lock = threading.Lock()
+    results_storage = {'results': []}  # 用于存储结果
+    results_lock = threading.Lock()
+
+    def process_with_thread_safe(video_path: Path, index: int):
+        """线程安全的视频处理"""
+        nonlocal counter
+
+        with print_lock:
+            counter['value'] += 1
+            current = counter['value']
+            print(f"\n{'='*80}")
+            print(f"[线程 {threading.current_thread().name}] [{current}/{len(videos)}] 处理: {video_path.relative_to(video_dir)}")
+            print(f"{'='*80}")
+
+        result = process_video(str(video_path), processor, prompt, keep_files, output_dir, str(video_dir))
+
+        with counter_lock:
+            if result and not result.startswith("❌"):
+                counter['success'] += 1
+                status = "completed"
+            else:
+                counter['fail'] += 1
+                status = "failed"
+
+        # 更新CSV状态
+        output_file_name = ""
         if result and not result.startswith("❌"):
-            success_count += 1
-        else:
-            fail_count += 1
+            try:
+                result_file = save_result(str(video_path), result, prompt, processor.current_model_name, output_dir, str(video_dir))
+                output_file_name = str(result_file)
+            except:
+                pass
 
-        results.append({
+        if csv_path and status:
+            update_csv_status(csv_path, str(video_path), status, output_file_name)
+
+        with results_lock:
+            results_storage['results'].append({
+                'video': str(video_path),
+                'result': result,
+                'status': status
+            })
+
+        return {
             'video': str(video_path),
-            'result': result
-        })
+            'result': result,
+            'status': status
+        }
 
-        # 避免请求过快
-        if i < len(videos):
-            time.sleep(2)
+    # 使用线程池并发处理
+    results = []
+    with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="Worker") as executor:
+        # 提交所有任务
+        future_to_video = {
+            executor.submit(process_with_thread_safe, video, i): video
+            for i, video in enumerate(videos, 1)
+        }
+
+        # 收集结果
+        for future in as_completed(future_to_video):
+            try:
+                result = future.result()
+                results.append(result)
+            except Exception as e:
+                video = future_to_video[future]
+                with print_lock:
+                    print(f"   └─ ❌ 处理异常 {video.name}: {e}")
+                with counter_lock:
+                    counter['fail'] += 1
 
     # 打印总结
     print(f"\n{'='*80}")
     print(f"📊 批量处理完成")
     print(f"{'='*80}")
-    print(f"总计: {len(videos)} | 成功: {success_count} | 失败: {fail_count}")
+    print(f"总计: {len(videos)} | 成功: {counter['success']} | 失败: {counter['fail']}")
 
 
 def process_video(video_path: str, processor: VideoProcessor, prompt: str,
-                  keep_files: bool = False, output_dir: str = "gemini_analysis") -> str:
+                  keep_files: bool = False, output_dir: str = "gemini_analysis",
+                  base_dir: str = None) -> str:
     """
     处理单个视频
 
@@ -542,6 +798,7 @@ def process_video(video_path: str, processor: VideoProcessor, prompt: str,
         prompt: 分析提示词
         keep_files: 是否保留上传的文件
         output_dir: 输出目录
+        base_dir: 基础目录（用于保持相对路径结构）
 
     Returns:
         分析结果
@@ -557,7 +814,7 @@ def process_video(video_path: str, processor: VideoProcessor, prompt: str,
         return None
 
     # 分析视频
-    result = processor.analyze_video(video_file, prompt)
+    result, token_info = processor.analyze_video(video_file, prompt)
 
     # 删除上传的文件
     if not keep_files:
@@ -567,8 +824,20 @@ def process_video(video_path: str, processor: VideoProcessor, prompt: str,
 
     # 保存结果
     if result and not result.startswith("❌"):
-        result_file = save_result(video_path, result, prompt, processor.current_model_name, output_dir)
-        print(f"   └─ 💾 结果已保存: {result_file.name}")
+        result_file = save_result(video_path, result, prompt, processor.current_model_name, output_dir, base_dir, token_info)
+        # 显示相对路径
+        if base_dir:
+            try:
+                rel_path = result_file.relative_to(Path(output_dir))
+                print(f"   └─ 💾 结果已保存: {rel_path}")
+            except:
+                print(f"   └─ 💾 结果已保存: {result_file.name}")
+        else:
+            print(f"   └─ 💾 结果已保存: {result_file.name}")
+
+        # 显示 Token 使用信息
+        if token_info and token_info.get('total_tokens', 0) > 0:
+            print(f"   └─ 📊 Token 使用: 输入 {token_info.get('prompt_tokens', 0):,} | 输出 {token_info.get('candidates_tokens', 0):,} | 总计 {token_info.get('total_tokens', 0):,}")
 
     return result
 
@@ -595,18 +864,26 @@ def main():
    python video_understand_gemini.py -video "video.mp4" -m brief      # 简洁总结
    python video_understand_gemini.py -video "video.mp4" -m detailed   # 详细分析
    python video_understand_gemini.py -video "video.mp4" -m transcript # 提取对话
-   python video_understand_gemini.py -video "video.mp4" -m knowledge  # 知识库型（默认）
+   python video_understand_gemini.py -video "video.mp4" -m knowledge  # 知识库型
 
-5. 自定义提示词:
+5. 批量分析（自动并发）:
+   python video_understand_gemini.py -dir "downloaded_videos" -m knowledge
+   # flash-lite: 10线程 | flash: 3线程 | pro: 6线程
+
+6. 自定义并发数:
+   python video_understand_gemini.py -dir "downloaded_videos" -j 5
+
+7. 自定义提示词:
    python video_understand_gemini.py -video "video.mp4" -p "请提取视频中所有人物对话"
 
-6. 保留上传的文件:
+8. 保留上传的文件:
    python video_understand_gemini.py -video "video.mp4" --keep
         """
     )
 
     parser.add_argument('-video', '--video-file', help='视频文件路径')
     parser.add_argument('-dir', '--directory', help='视频文件目录（批量处理）')
+    parser.add_argument('-csv', '--csv-file', help='CSV文件路径（用于跟踪状态）')
     parser.add_argument('-m', '--mode', choices=['summary', 'brief', 'detailed', 'transcript', 'knowledge'],
                         default='summary', help='提示词模式（默认: summary）')
     parser.add_argument('-p', '--prompt', help='自定义提示词（覆盖模式选择）')
@@ -614,6 +891,10 @@ def main():
                         default='flash-lite', help='Gemini 模型（默认: flash-lite）')
     parser.add_argument('-o', '--output', default='gemini_analysis',
                         help='输出目录（默认: gemini_analysis）')
+    parser.add_argument('-j', '--jobs', type=int, default=None,
+                        help='并发处理数（默认自动: flash-lite=10, flash=3, pro=6）')
+    parser.add_argument('--force', action='store_true',
+                        help='强制重新处理所有视频（不跳过已完成）')
     parser.add_argument('--keep', action='store_true',
                         help='保留上传到 Gemini 的文件')
     parser.add_argument('--list-modes', action='store_true',
@@ -654,7 +935,8 @@ def main():
         print(f"\n{'='*80}")
         print(f"📂 批量分析模式")
         print(f"{'='*80}")
-        batch_analyze(args.directory, processor, prompt, keep_files=args.keep, output_dir=args.output)
+        batch_analyze(args.directory, processor, prompt, keep_files=args.keep, output_dir=args.output,
+                     max_workers=args.jobs, csv_path=args.csv_file, skip_completed=not args.force)
 
     print(f"\n✅ 完成!")
 

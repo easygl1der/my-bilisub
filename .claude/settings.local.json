@@ -26,7 +26,10 @@
       "Bash(git config:*)",
       "Bash(findstr:*)",
       "Bash(del:*)",
-      "Bash(git stash:*)"
+      "Bash(git stash:*)",
+      "mcp__web-search-prime__webSearchPrime",
+      "WebSearch",
+      "mcp__zread__get_repo_structure"
     ]
   }
 }
