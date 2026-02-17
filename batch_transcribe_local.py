@@ -116,6 +116,18 @@ def transcribe_whisper(audio_path: Path, model: str = "small", language: str = "
     return result
 
 
+def get_author_name(video_path: Path, base_dir: Path) -> str:
+    """从视频路径获取作者名"""
+    # video_path 可能是: downloaded_videos/作者名/视频.mp4
+    # 或者: downloaded_videos/作者名/视频文件夹/视频.mp4 (图文类型)
+    relative = video_path.relative_to(base_dir)
+
+    # 第一级目录通常是作者名
+    if len(relative.parts) >= 2:
+        return relative.parts[0]
+    return "unknown"
+
+
 def save_srt(result: dict, output_path: Path, video_name: str):
     """保存为 SRT 格式"""
     output_path.mkdir(parents=True, exist_ok=True)
@@ -129,7 +141,7 @@ def save_srt(result: dict, output_path: Path, video_name: str):
                 return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
             f.write(f"{i}\n{fmt(seg['start'])} --> {fmt(seg['end'])}\n{seg['text'].strip()}\n\n")
 
-    print(f"   📄 字幕已保存: {srt_path.name}")
+    print(f"   📄 字幕已保存: {srt_path.relative_to(Path.cwd())}")
     return srt_path
 
 
@@ -144,11 +156,18 @@ def save_txt(result: dict, output_path: Path, video_name: str):
     return txt_path
 
 
-def process_video(video_path: Path, model: str, output_dir: Path, skip_existing: bool = False) -> dict:
+def process_video(video_path: Path, model: str, output_base_dir: Path, base_dir: Path, skip_existing: bool = False) -> dict:
     """处理单个视频"""
+    # 获取作者名
+    author_name = get_author_name(video_path, base_dir)
+
+    # 为每个作者创建单独的输出目录
+    output_dir = output_base_dir / author_name
+
     result = {
         'video': str(video_path),
         'video_name': video_path.stem,
+        'author': author_name,
         'success': False,
         'error': None,
         'elapsed': 0,
@@ -201,8 +220,8 @@ def process_video(video_path: Path, model: str, output_dir: Path, skip_existing:
 def batch_process(input_dir: str, model: str = "small", skip_existing: bool = False):
     """批量处理"""
     input_path = Path(input_dir)
-    output_path = Path(OUTPUT_DIR)
-    output_path.mkdir(parents=True, exist_ok=True)
+    output_base_dir = Path(OUTPUT_DIR)
+    output_base_dir.mkdir(parents=True, exist_ok=True)
 
     # 查找视频
     print(f"📁 扫描目录: {input_path}")
@@ -214,6 +233,19 @@ def batch_process(input_dir: str, model: str = "small", skip_existing: bool = Fa
 
     print(f"✅ 找到 {len(videos)} 个视频文件\n")
 
+    # 按作者分组显示
+    authors = {}
+    for v in videos:
+        author = get_author_name(v, input_path)
+        if author not in authors:
+            authors[author] = []
+        authors[author].append(v)
+
+    print(f"📊 作者分布:")
+    for author, auth_videos in sorted(authors.items()):
+        print(f"   • {author}: {len(auth_videos)} 个视频")
+    print()
+
     # 统计信息
     results = []
     success_count = 0
@@ -224,7 +256,7 @@ def batch_process(input_dir: str, model: str = "small", skip_existing: bool = Fa
     for i, video_path in enumerate(videos, 1):
         print(f"\n[进度: {i}/{len(videos)}]")
 
-        result = process_video(video_path, model, output_path, skip_existing)
+        result = process_video(video_path, model, output_base_dir, input_path, skip_existing)
         results.append(result)
 
         if result['success']:
@@ -253,10 +285,15 @@ def batch_process(input_dir: str, model: str = "small", skip_existing: bool = Fa
         print(f"   总耗时: {total_time:.1f}秒 ({total_time/60:.1f}分钟)")
         print(f"   平均: {total_time/success_count:.1f}秒/视频")
 
-    print(f"\n📁 输出目录: {output_path.absolute()}")
+    print(f"\n📁 输出目录结构:")
+    for author in sorted(authors.keys()):
+        author_dir = output_base_dir / author
+        if author_dir.exists():
+            srt_count = len(list(author_dir.glob("*.srt")))
+            print(f"   • {author}/: {srt_count} 个字幕文件")
 
     # 保存报告
-    report_path = output_path / f"batch_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+    report_path = output_base_dir / f"batch_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
     with open(report_path, 'w', encoding='utf-8') as f:
         f.write(f"批量转录报告\n")
         f.write(f"{'='*60}\n")
@@ -265,15 +302,22 @@ def batch_process(input_dir: str, model: str = "small", skip_existing: bool = Fa
         f.write(f"Whisper模型: {model}\n\n")
         f.write(f"总数: {len(videos)} | 成功: {success_count} | 跳过: {skip_count} | 失败: {fail_count}\n\n")
 
+        # 按作者分组显示
+        f.write(f"作者统计:\n")
+        for author, auth_videos in sorted(authors.items()):
+            f.write(f"   {author}: {len(auth_videos)} 个视频\n")
+        f.write(f"\n{'='*60}\n\n")
+
         for i, r in enumerate(results, 1):
             status = "✅" if r['success'] else "❌"
             if r['success'] and 'skip_reason' in r:
                 status = "⏭️ "
-            f.write(f"{i}. {status} {Path(r['video']).name}\n")
+            author_info = f"[{r.get('author', 'unknown')}]"
+            f.write(f"{i}. {status} {author_info} {Path(r['video']).name}\n")
             if r.get('error'):
                 f.write(f"   错误: {r['error']}\n")
 
-    print(f"📄 报告已保存: {report_path.name}")
+    print(f"\n📄 报告已保存: {report_path.name}")
 
 
 def main():

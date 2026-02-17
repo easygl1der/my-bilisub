@@ -290,77 +290,77 @@ def download_images_from_note(url: str, title: str, output_dir: Path, platform: 
 
                 html = response.text
 
-                # 尝试多种方式提取图片URL
+                # 检查是否被重定向到404
+                if '/404?' in response.url or '你访问的页面不见了' in html:
+                    print(f"   └─ ⚠️  页面无法访问（反爬虫保护或链接失效）")
+                    # 继续尝试其他方法
 
-                # 方式1: 从 __INITIAL_STATE__ 提取
-                initial_state_pattern = r'window\.__INITIAL_STATE__\s*=\s*({.+?});'
-                match = re.search(initial_state_pattern, html)
-                if match:
-                    try:
-                        initial_state = json.loads(match.group(1))
-                        # 尝试多种路径
-                        paths = [
-                            initial_state.get('note', {}).get('noteDetail', {}).get('imageList', []),
-                            initial_state.get('note', {}).get('noteDetail', {}).get('images', []),
-                            initial_state.get('note', {}).get('detail', {}).get('imageList', []),
-                            initial_state.get('note', {}).get('detail', {}).get('images', []),
-                        ]
-                        for path in paths:
-                            if isinstance(path, list):
-                                for img_obj in path:
-                                    if isinstance(img_obj, dict):
-                                        # 尝试多个可能的字段
-                                        img_url = (img_obj.get('urlDefault') or
-                                                  img_obj.get('url_default') or
-                                                  img_obj.get('url') or
-                                                  img_obj.get('infoList', [{}])[0].get('url') if isinstance(img_obj.get('infoList'), list) else None)
-                                        if img_url:
-                                            unique_images.append(img_url)
-                    except json.JSONDecodeError:
-                        pass
+                # 改进版：使用括号匹配法完整提取 imageList
+                start_idx = html.find('window.__INITIAL_STATE__=')
+                if start_idx >= 0:
+                    start_idx += len('window.__INITIAL_STATE__=')
+                    end_idx = html.find('</script>', start_idx)
+                    json_str = html[start_idx:end_idx]
 
-                # 方式2: 从 __INITIAL_SSR_STATE__ 提取
+                    # 查找 imageList 数组 - 使用计数器匹配完整的数组
+                    list_start = json_str.find('"imageList"')
+                    if list_start >= 0:
+                        bracket_start = json_str.find('[', list_start)
+                        if bracket_start >= 0:
+                            # 手动匹配对应的 ]
+                            depth = 0
+                            i = bracket_start
+                            while i < len(json_str):
+                                if json_str[i] == '[':
+                                    depth += 1
+                                elif json_str[i] == ']':
+                                    depth -= 1
+                                    if depth == 0:
+                                        bracket_end = i
+                                        break
+                                i += 1
+
+                            list_content = json_str[bracket_start+1:bracket_end]
+
+                            # 只提取 urlDefault（默认/原图），跳过其他变体
+                            url_pattern = r'"urlDefault":"([^"]+)"'
+                            for match in re.finditer(url_pattern, list_content):
+                                img_url = match.group(1)
+                                if img_url:
+                                    # 解码 Unicode 转义
+                                    try:
+                                        img_url = img_url.encode('utf-8').decode('unicode_escape')
+                                    except:
+                                        pass
+                                    # 确保 https 协议
+                                    if img_url.startswith('http://'):
+                                        img_url = 'https://' + img_url[7:]
+                                    if 'xhscdn' in img_url:
+                                        unique_images.append(img_url)
+
+                # 备用：如果上面失败，尝试 JSON 解析
                 if not unique_images:
-                    ssr_state_pattern = r'window\.__INITIAL_SSR_STATE__\s*=\s*({.+?});'
-                    match = re.search(ssr_state_pattern, html)
+                    initial_state_pattern = r'window\.__INITIAL_STATE__\s*=\s*({.+?});'
+                    match = re.search(initial_state_pattern, html)
                     if match:
                         try:
-                            ssr_state = json.loads(match.group(1))
-                            # 尝试多种路径
-                            paths = [
-                                ssr_state.get('note', {}).get('noteDetailMap', {}),
-                                ssr_state.get('note', {}).get('detailMap', {}),
-                            ]
-                            for path_obj in paths:
-                                if isinstance(path_obj, dict):
-                                    for note_id, note_data in path_obj.items():
-                                        if isinstance(note_data, dict):
-                                            image_list = note_data.get('imageList') or note_data.get('images') or []
-                                            if isinstance(image_list, list):
-                                                for img_obj in image_list:
-                                                    if isinstance(img_obj, dict):
-                                                        img_url = (img_obj.get('urlDefault') or
-                                                                  img_obj.get('url_default') or
-                                                                  img_obj.get('url'))
-                                                        if img_url:
-                                                            unique_images.append(img_url)
-                        except (json.JSONDecodeError, AttributeError):
+                            initial_state = json.loads(match.group(1))
+                            image_list = initial_state.get('note', {}).get('noteDetail', {}).get('imageList', [])
+                            if isinstance(image_list, list):
+                                for img_obj in image_list:
+                                    if isinstance(img_obj, dict):
+                                        img_url = img_obj.get('urlDefault') or img_obj.get('url')
+                                        if img_url:
+                                            unique_images.append(img_url)
+                        except json.JSONDecodeError:
                             pass
 
-                # 方式3: 从 meta 标签获取封面图
-                soup = BeautifulSoup(html, 'html.parser')
-                meta_og_image = soup.find('meta', property='og:image')
-                if meta_og_image:
-                    img_url = meta_og_image.get('content')
-                    if img_url and img_url not in unique_images:
-                        unique_images.append(img_url)
-
-                # 方式4: 使用正则表达式直接查找图片URL
+                # 备用2: 从整个 HTML 中搜索 sns-webpic 图片URL
                 if not unique_images:
-                    # 匹配小红书CDN图片URL
-                    xhs_img_pattern = r'https?://[a-z0-9\-]*\.xhscdn\.com/[a-z0-9/\-]+\.(?:jpg|jpeg|png|webp)'
-                    found_urls = re.findall(xhs_img_pattern, html)
-                    unique_images.extend(found_urls)
+                    all_urls = re.findall(r'(https://sns-webpic[^\"\s\'<>]+)', html)
+                    unique_urls = list(set(all_urls))
+                    if unique_urls:
+                        unique_images.extend(unique_urls[:10])
 
             except Exception as e:
                 print(f"   └─ ⚠️  小红书页面解析失败: {str(e)[:40]}")
