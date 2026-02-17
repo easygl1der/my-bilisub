@@ -30,6 +30,13 @@
 - **批量处理**：支持CSV文件批量处理
 - **性能计时**：详细的时间统计
 
+### 5. AI视频内容分析（Gemini）
+- **智能视频理解**：上传视频到Gemini API进行深度分析
+- **多种分析模式**：summary/brief/detailed/transcript
+- **自动模型切换**：当配额不足时自动切换模型
+- **批量处理支持**：支持目录批量分析
+- **知识库构建**：结构化输出，适合构建第二大脑
+
 ## 文件结构
 
 ```
@@ -44,6 +51,9 @@ biliSub/
 │   ├── optimize_srt_glm.py         # GLM优化工具
 │   └── srt_prompts.py              # Prompt定义文件
 │
+├── 视频内容分析（Gemini API）
+│   └── video_understand_gemini.py  # AI视频内容理解工具
+│
 ├── 配置文件（需自行创建）
 │   └── config_api.py               # API密钥配置
 │
@@ -55,7 +65,8 @@ biliSub/
     ├── output/transcripts/         # Whisper生成的字幕
     ├── output/optimized_srt/       # GLM优化后的字幕
     ├── output/xiaohongshu/         # 小红书视频
-    └── output/api_results/         # API调用结果
+    ├── output/api_results/         # API调用结果
+    └── gemini_analysis/            # Gemini视频分析结果
 ```
 
 ## 完整使用流程
@@ -101,6 +112,34 @@ python check_subtitle.py "视频url"
 # 如果没有，再使用Whisper
 ```
 
+### 场景5：使用Gemini AI进行视频内容分析
+
+```bash
+# 1. 配置Gemini API Key（二选一）
+# 方式1: 环境变量
+export GEMINI_API_KEY='your-key'
+
+# 方式2: 在config_api.py中添加
+# API_CONFIG = {"gemini": {"api_key": "your-key"}}
+
+# 2. 分析单个视频（默认summary模式）
+python video_understand_gemini.py -video "path/to/video.mp4"
+
+# 3. 使用不同提示词模式
+python video_understand_gemini.py -video "video.mp4" -m brief      # 简洁总结
+python video_understand_gemini.py -video "video.mp4" -m detailed   # 详细分析
+python video_understand_gemini.py -video "video.mp4" -m transcript # 提取对话
+
+# 4. 批量分析目录下的视频
+python video_understand_gemini.py -dir "downloaded_videos"
+
+# 5. 指定模型（flash-lite/flash/pro）
+python video_understand_gemini.py -video "video.mp4" --model flash-lite
+
+# 6. 自定义输出目录
+python video_understand_gemini.py -video "video.mp4" -o "my_analysis"
+```
+
 ## 性能数据
 
 ### Whisper识别速度（实测）
@@ -118,6 +157,16 @@ python check_subtitle.py "视频url"
 | 58段 | optimization | ~40秒 | 12次 |
 | 58段 | tech | ~44秒 | 12次 |
 | 58段 | simple | ~42秒 | 12次 |
+
+### Gemini视频分析速度
+
+| 视频时长 | 上传时间 | 处理等待 | 分析时间 | 总计 |
+|---------|---------|---------|---------|------|
+| 1分钟 | ~30秒 | ~10秒 | ~20秒 | ~1分钟 |
+| 5分钟 | ~1分钟 | ~30秒 | ~40秒 | ~2分钟 |
+| 10分钟 | ~2分钟 | ~1分钟 | ~1分钟 | ~4分钟 |
+
+**注意**：实际时间取决于网络速度和Gemini API负载。
 
 ### 下载速度优化
 
@@ -234,6 +283,7 @@ whisper-openai
 requests
 paddleocr
 paddlepaddle
+google-generativeai   # Gemini视频分析
 ```
 
 ### 安装命令
@@ -245,6 +295,7 @@ conda activate bilisub
 # 安装依赖
 pip install yt-dlp whisper-openai requests
 pip install paddleocr paddlepaddle
+pip install google-generativeai  # Gemini视频分析
 ```
 
 ## 配置文件示例
@@ -259,6 +310,9 @@ API_CONFIG = {
         "temperature": 0.3,
         "top_p": 0.7,
         "max_tokens": 2000
+    },
+    "gemini": {
+        "api_key": "your_gemini_api_key"  # Gemini API密钥
     }
 }
 ```
@@ -287,12 +341,20 @@ API_CONFIG = {
 - 合理设置批处理大小
 - 批量处理使用simple模式
 
+### 5. Gemini使用建议
+- **模型选择**：flash-lite（免费额度高，推荐）/ flash（速度快）/ pro（精度高）
+- **模式选择**：summary（默认）/ brief（快速）/ detailed（深度）/ transcript（逐字稿）
+- **视频大小**：建议2GB以内，过大会导致上传和处理时间过长
+- **批量分析**：避免同时分析过多视频，注意API配额限制
+
 ## 已知限制
 
 1. **PaddleOCR环境**：某些环境配置可能有兼容性问题
 2. **小红书稳定性**：偶尔出现502/SSL错误
 3. **Large模型**：需要更多内存（~4GB）
 4. **API费用**：GLM API调用产生费用
+5. **Gemini限制**：每日请求次数限制（免费版flash-lite: 1000次/天）
+6. **Gemini文件大小**：最大支持2GB视频文件
 
 ## 未来改进方向
 
@@ -318,5 +380,20 @@ API_CONFIG = {
 
 ---
 
-**最后更新**：2025年2月
-**版本**：v1.0
+**最后更新**：2026年2月
+**版本**：v1.1
+
+## 更新日志
+
+### v1.1 (2026-02)
+- 新增 `video_understand_gemini.py` - Gemini AI视频内容分析工具
+- 支持多种分析模式（summary/brief/detailed/transcript）
+- 支持批量视频分析
+- 自动模型切换功能（配额不足时）
+- 完善的文档和使用说明
+
+### v1.0 (2025-02)
+- 初始版本
+- B站/小红书视频字幕下载
+- Whisper语音识别
+- GLM字幕优化
