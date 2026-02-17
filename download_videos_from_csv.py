@@ -140,8 +140,60 @@ def detect_platform(url: str) -> str:
         return 'bilibili'
     elif 'xiaohongshu.com' in url or 'xhslink.com' in url:
         return 'xiaohongshu'
+    elif 'youtube.com' in url or 'youtu.be' in url:
+        return 'youtube'
     else:
         return 'unknown'
+
+
+def detect_bilibili_type(url: str) -> str:
+    """
+    检测B站链接的类型
+
+    Args:
+        url: B站链接
+
+    Returns:
+        'video' (视频) 或 'normal' (图文/专栏)
+    """
+    url_lower = url.lower()
+
+    # b23.tv 短链接默认为视频
+    if 'b23.tv' in url_lower:
+        return 'video'
+
+    # B站图文/专栏URL特征（优先检查）
+    article_patterns = [
+        '/read/',       # 专栏 https://www.bilibili.com/read/...
+        '/opus/',       # 动态投稿 https://www.bilibili.com/opus/...
+        'article',      # 包含article关键字
+    ]
+
+    # 检查是否为图文/专栏
+    for pattern in article_patterns:
+        if pattern in url_lower:
+            return 'normal'
+
+    # B站视频URL特征
+    video_patterns = [
+        '/video/',      # 普通视频 https://www.bilibili.com/video/BV...
+        '/av',          # av号 https://www.bilibili.com/av...
+        'bilibili.com/bvid',  # BV号
+        '/bangumi/',    # 番剧
+        '/medialist/',  # 播放列表
+    ]
+
+    # 检查是否为视频
+    for pattern in video_patterns:
+        if pattern in url_lower:
+            return 'video'
+
+    # 如果URL包含 bilibili.com 但不匹配上述模式，默认为视频
+    if 'bilibili.com' in url_lower:
+        return 'video'
+
+    # 未知情况默认为视频
+    return 'video'
 
 
 def get_author_name_from_csv(csv_path: str) -> str:
@@ -187,6 +239,17 @@ def parse_csv(csv_path: str, filter_type: str = None) -> list:
                 if not url or not url.startswith('http'):
                     continue
 
+                # 如果类型为空，自动检测
+                if not note_type:
+                    platform = detect_platform(url)
+                    if platform == 'bilibili':
+                        note_type = detect_bilibili_type(url)
+                    elif platform == 'xiaohongshu':
+                        # 小红书暂时默认为视频，下载时再判断
+                        note_type = 'video'
+                    else:
+                        note_type = 'video'  # 未知平台默认为视频
+
                 # 类型筛选
                 if filter_type and filter_type.lower() != note_type.lower():
                     continue
@@ -226,7 +289,7 @@ def show_video_list(videos: list, show_count: int = 10):
 
     for i, video in enumerate(videos, 1):
         platform = detect_platform(video['url'])
-        platform_icon = {'xiaohongshu': '📕', 'bilibili': '📺', 'unknown': '📄'}.get(platform, '📄')
+        platform_icon = {'xiaohongshu': '📕', 'bilibili': '📺', 'youtube': '▶️', 'unknown': '📄'}.get(platform, '📄')
 
         # 类型图标
         note_type = video.get('type', '').lower()
@@ -637,6 +700,15 @@ def download_video(video_info: dict, index: int, total: int, output_dir: Path, h
                 headers['Cookie'] = BILI_COOKIE
             ydl_opts.update({
                 'http_headers': headers
+            })
+
+        # YouTube特殊处理（使用最佳质量）
+        elif platform == 'youtube':
+            ydl_opts.update({
+                'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+                'http_headers': {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                }
             })
 
         # 自定义headers优先
