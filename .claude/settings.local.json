@@ -21,7 +21,10 @@
       "Bash(Get-Command python*)",
       "Bash(Select-Object:*)",
       "Bash(conda install:*)",
-      "Bash(git reset:*)"
+      "Bash(git reset:*)",
+      "Bash(powershell:*)",
+      "Bash(git config:*)",
+      "Bash(findstr:*)"
     ]
   }
 }

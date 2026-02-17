@@ -27,6 +27,7 @@ import re
 import time
 import threading
 import argparse
+import shutil
 from pathlib import Path
 from datetime import datetime
 
@@ -39,6 +40,11 @@ if sys.platform == 'win32':
     import io
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+
+
+# ==================== B站 Cookie 配置 ====================
+# 从 fetch_bilibili_videos.py 复制的 B 站 Cookie
+BILI_COOKIE = "buvid3=ED836AB2-1A1F-83B3-C368-EC717E8514CC52442infoc; b_nut=1768880952; lang=zh-Hans; theme-tip-show=SHOWED; buvid4=E6C199FE-5C98-198C-D77F-9B183C96AC6657438-026012011-zxmN2%2Bh1P%2F0eoan1hmmTzg%3D%3D; buvid_fp=bdde8cc73192655bb657c6b1b634831a; rpdid=|(Jl|J~JlJu)0J'u~Y)))u|Rl; theme-avatar-tip-show=SHOWED; DedeUserID=352314171; DedeUserID__ckMd5=8753aa0a6f5400e0; CURRENT_QUALITY=80; bili_ticket=eyJhbGciOiJIUzI1NiIsImtpZCI6InMwMyIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzEzNTA4OTgsImlhdCI6MTc3MTA5MTYzOCwicGx0IjotMX0.7NGUxpL_Kpz6MIafuGccDUrwQ0MYWTJIdZbcWzRFbK0; bili_ticket_expires=1771350838; SESSDATA=340e7534%2C1786643702%2C8ff5f%2A22CjBmNdSHwh1cJexOwoyFWM5LODSzCLixmDSo8umHTW2VrYyVmwwZMAH0xptDSCSuoaoSVnJ1UF9Lc0pockFlLTlKMEYteUdfNFhSbUxYTDlZak1sMHd1MHlpRTJKUzg3WGpYbVpNbEFNNlZyczJuMUZObW5mOVgtWjJQZnJ0TFhHY1NnbnA1c1lRIIEC; bili_jct=00bda0ae20a58226c7ab7c0198f889e8; bmg_af_switch=1; bmg_src_def_domain=i2.hdslb.com; sid=8khlk9a0; bp_t_offset_352314171=1169997504301760512; CURRENT_FNVAL=2000; home_feed_column=4; brows"
 
 
 # ==================== 进度条 ====================
@@ -540,17 +546,23 @@ def download_video(video_info: dict, index: int, total: int, output_dir: Path, h
         # 检查是否已存在
         if note_dir.exists():
             img_count = len(list(note_dir.glob('*.*')))
-            result['success'] = True
-            result['output_file'] = str(note_dir)
-            result['skip_reason'] = f'已存在({img_count}张图)'
-            result['elapsed'] = 0
-            result['count'] = img_count
-            result['skip_is_normal'] = True  # 标记跳过的是图文
-            result['skip_count'] = img_count
+            # 如果文件夹存在但图片数为0，删除空文件夹重新下载
+            if img_count == 0:
+                print(f"\n[{index}/{total}] 📕 {title[:50]}... | [图文]")
+                print(f"   └─ ⚠️  文件夹为空，重新下载...")
+                shutil.rmtree(note_dir, ignore_errors=True)
+            else:
+                result['success'] = True
+                result['output_file'] = str(note_dir)
+                result['skip_reason'] = f'已存在({img_count}张图)'
+                result['elapsed'] = 0
+                result['count'] = img_count
+                result['skip_is_normal'] = True  # 标记跳过的是图文
+                result['skip_count'] = img_count
 
-            print(f"\n[{index}/{total}] 📕 {title[:50]}... | [图文]")
-            print(f"   └─ ⏭️  已存在 ({img_count}张图片)")
-            return result
+                print(f"\n[{index}/{total}] 📕 {title[:50]}... | [图文]")
+                print(f"   └─ ⏭️  已存在 ({img_count}张图片)")
+                return result
 
         # 下载图文
         print(f"\n[{index}/{total}] 📕 {title[:50]}... | [图文]")
@@ -616,11 +628,15 @@ def download_video(video_info: dict, index: int, total: int, output_dir: Path, h
 
         # B站特殊处理
         elif platform == 'bilibili':
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Referer': 'https://www.bilibili.com/',
+            }
+            # 添加 Cookie
+            if BILI_COOKIE:
+                headers['Cookie'] = BILI_COOKIE
             ydl_opts.update({
-                'http_headers': {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    'Referer': 'https://www.bilibili.com/',
-                }
+                'http_headers': headers
             })
 
         # 自定义headers优先
