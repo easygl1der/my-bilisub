@@ -25,7 +25,8 @@
       "Bash(powershell:*)",
       "Bash(git config:*)",
       "Bash(findstr:*)",
-      "Bash(del:*)"
+      "Bash(del:*)",
+      "Bash(git stash:*)"
     ]
   }
 }
