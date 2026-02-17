@@ -4,46 +4,73 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 import requests
 import re
+import json
 
-url = 'https://www.xiaohongshu.com/explore/698d8b4c000000000c0360e2'
+url = 'https://www.xiaohongshu.com/explore/698d8b4c000000000c0360e2?xsec_token=ABtk__zniCl2zWeX1W4x5VmMEL3tBj2b3hAFGXUFsoLkw=&xsec_source=pc_user'
 headers = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Referer': 'https://www.xiaohongshu.com/',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
 }
 
-print(f'Requesting: {url}')
+print(f'请求: {url[:80]}...')
 r = requests.get(url, headers=headers, timeout=30)
-print(f'Status: {r.status_code}')
-print(f'URL after redirect: {r.url}')
-print(f'Content length: {len(r.text)}')
+print(f'状态: {r.status_code}')
 
 html = r.text
 
-# 检查标题
-title_match = re.search(r'<title>(.+?)</title>', html)
-if title_match:
-    print(f'Title: {title_match.group(1)}')
+# 检查是否成功
+if '404' in r.url or '你访问的页面不见了' in html:
+    print('被重定向到404页面!')
+    print(f'最终URL: {r.url}')
+else:
+    print('成功获取页面')
 
-# 检查是否需要登录
-if '登录' in html:
-    print('WARNING: Page may require login')
+# 提取 __INITIAL_STATE__
+start_idx = html.find('window.__INITIAL_STATE__=')
+if start_idx >= 0:
+    start_idx += len('window.__INITIAL_STATE__=')
+    end_idx = html.find('</script>', start_idx)
+    json_str = html[start_idx:end_idx]
 
-# 查找所有图片相关的script标签
-print('\n=== Searching for images in scripts ===')
-scripts = re.findall(r'<script[^>]*>(.+?)</script>', html, re.DOTALL)
-print(f'Found {len(scripts)} script tags')
+    print(f'\n=== JSON数据片段 ===')
+    print(f'JSON长度: {len(json_str)}')
 
-# 查找包含图片数据的script
-for i, script in enumerate(scripts):
-    if 'imageList' in script or 'urlDefault' in script or 'xhscdn' in script:
-        print(f'\nScript #{i} contains image data (length: {len(script)})')
-        # 显示前500字符
-        print(script[:500])
+    # 搜索所有可能包含图片的字段
+    print('\n=== 搜索图片相关字段 ===')
+    fields = ['imageList', 'images', 'urlDefault', 'traceId', 'noteDetail']
+    for field in fields:
+        count = json_str.count(field)
+        print(f'{field}: {count}')
 
-# 检查整个页面中的 xhscdn URL
-all_urls = re.findall(r'(https?://[a-z0-9\.\-]*xhscdn\.com/[^\s"\'<>]+)', html)
-print(f'\n=== All xhscdn URLs ===')
-for i, u in enumerate(set(all_urls), 1):
-    print(f'{i}. {u[:100]}')
+    # 尝试直接提取 imageList 数组内容
+    print('\n=== 尝试提取 imageList ===')
+    # 使用更宽松的正则
+    patterns = [
+        r'"imageList"\s*:\s*(\[.+?\])',
+        r'"imageList"\s*:\s*(\[[^\]]+\])',
+    ]
+
+    for pat in patterns:
+        match = re.search(pat, json_str, re.DOTALL)
+        if match:
+            content = match.group(1)
+            print(f'找到 imageList (长度: {len(content)})')
+            print(f'前500字符: {content[:500]}')
+
+            # 计算对象数量（通过 { 计数）
+            obj_count = content.count('{')
+            print(f'对象数量约: {obj_count}')
+            break
+
+    # 显示整个 JSON 的结构
+    print('\n=== JSON 顶层结构 ===')
+    try:
+        # 尝试只解析顶层
+        # 找到第一个 { 和匹配的 }
+        data = json.loads(json_str)
+        print(f'顶层键: {list(data.keys())[:10]}')
+
+        if 'note' in data:
+            print(f'note 键: {list(data["note"].keys())[:10]}')
+    except:
+        pass

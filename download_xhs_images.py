@@ -117,23 +117,38 @@ def extract_xhs_images(url):
     if not image_urls:
         print(f"🔍 尝试直接搜索 imageList...")
 
-        # 找到 imageList: [...] 部分
-        image_list_match = re.search(r'"imageList"\s*:\s*\[(.+?)\]\s*(?:"images"|"cover")', json_str, re.DOTALL)
-        if not image_list_match:
-            # 尝试更宽松的匹配
-            image_list_match = re.search(r'"imageList"\s*:\s*\[(.+?)\](?=\s*,\s*")', json_str, re.DOTALL)
+        # 找到 imageList: [...] 部分 - 使用计数器匹配完整的数组
+        start = json_str.find('"imageList"')
+        if start >= 0:
+            # 找到 [
+            bracket_start = json_str.find('[', start)
+            if bracket_start >= 0:
+                # 手动匹配对应的 ]
+                depth = 0
+                i = bracket_start
+                while i < len(json_str):
+                    if json_str[i] == '[':
+                        depth += 1
+                    elif json_str[i] == ']':
+                        depth -= 1
+                        if depth == 0:
+                            bracket_end = i
+                            break
+                    i += 1
 
-        if image_list_match:
-            list_content = image_list_match.group(1)
-            # 从中提取所有 URL
-            url_pattern = r'"urlDefault":"([^"]+)"|"url":"([^"]+)"|"url_default":"([^"]+)"'
-            for match in re.finditer(url_pattern, list_content):
-                url = match.group(1) or match.group(2) or match.group(3)
-                if url:
-                    image_urls.append(url)
+                list_content = json_str[bracket_start+1:bracket_end]
+                print(f"✅ 找到 imageList，内容长度: {len(list_content)}")
 
-            if image_urls:
-                print(f"✅ 找到 {len(image_urls)} 张图片")
+                # 只提取 urlDefault（默认/原图），跳过 urlPre 和 infoList
+                # 每个 image 对象只取一个 urlDefault
+                url_pattern = r'"urlDefault":"([^"]+)"'
+                for match in re.finditer(url_pattern, list_content):
+                    url = match.group(1)
+                    if url:
+                        image_urls.append(url)
+
+                if image_urls:
+                    print(f"✅ 提取到 {len(image_urls)} 张图片")
 
     # 方法3: 从整个 HTML 中搜索 sns-webpic 图片URL（备用）
     if not image_urls:
