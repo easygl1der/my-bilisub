@@ -794,11 +794,12 @@ def save_report(results: list, author_name: str, output_dir: str = "downloaded_v
     report_dir = Path(output_dir)
     report_dir.mkdir(parents=True, exist_ok=True)
 
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    report_file = report_dir / f"{sanitize_filename(author_name)}_下载报告_{timestamp}.txt"
+    # 使用固定的报告文件名，所有报告追加到同一个文件
+    report_file = report_dir / f"{sanitize_filename(author_name)}_下载报告.txt"
 
     # 使用UTF-8 BOM编码，确保Windows记事本能正确显示中文
-    with open(report_file, 'w', encoding='utf-8-sig') as f:
+    # 追加模式，所有报告写入同一个文件
+    with open(report_file, 'a', encoding='utf-8-sig') as f:
         f.write(f"视频/图文下载报告\n")
         f.write(f"{'='*60}\n")
         f.write(f"作者: {author_name}\n")
