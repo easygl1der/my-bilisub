@@ -34,7 +34,8 @@
       "Bash(set PYTHONUNBUFFERED=1:*)",
       "Bash(timeout:*)",
       "Bash(E:\\\\Anaconda\\\\python.exe:*)",
-      "Bash(npx @z_ai/coding-helper)"
+      "Bash(npx @z_ai/coding-helper)",
+      "Bash(pip show:*)"
     ]
   }
 }

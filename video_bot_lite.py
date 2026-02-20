@@ -323,15 +323,13 @@ class VideoBotLite:
 
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-        builder = Application.builder().token(self.config.bot_token)
-
         if self.config.proxy_url:
             from telegram.request import HTTPXRequest
             request = HTTPXRequest(proxy=self.config.proxy_url)
-            builder = builder.connection_pool_request(request)
+            self.application = Application.builder().token(self.config.bot_token).request(request).build()
             print(f"🌐 使用代理: {self.config.proxy_url}")
-
-        self.application = builder.build()
+        else:
+            self.application = Application.builder().token(self.config.bot_token).build()
 
         self.application.add_handler(CommandHandler("start", self.cmd_start))
         self.application.add_handler(CommandHandler("help", self.cmd_help))
@@ -419,6 +417,21 @@ class VideoBotLite:
 
         data = query.data
         user_id = update.effective_user.id
+
+        # 处理取消操作
+        if data.startswith("cancel_"):
+            parts = data.split('_')
+            task_id = parts[1]
+
+            # 从队列中移除任务
+            for i, t in enumerate(self.queue.queue):
+                if t.task_id == task_id and t.user_id == user_id:
+                    del self.queue.queue[i]
+                    await query.edit_message_text("❌ 任务已取消")
+                    return
+
+            await query.edit_message_text("⚠️ 任务不存在或已过期")
+            return
 
         if data.startswith("mode_"):
             # 用户选择了分析模式

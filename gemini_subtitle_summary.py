@@ -457,15 +457,99 @@ class GeminiSummarizer:
 
 # ==================== 主处理逻辑 ====================
 
-def process_subtitles(subtitle_dir: str, model: str = 'flash-lite',
-                      custom_prompt: str = None) -> tuple:
+def process_single_video(srt_file: Path, index: int, total: int, model: str, api_key: str) -> Dict:
     """
-    处理字幕文件夹，生成摘要和汇总报告
+    处理单个视频字幕（线程安全，用于并发）
+
+    Returns:
+        处理结果字典
+    """
+    video_start_time = time.time()
+    title = srt_file.stem
+
+    # 线程安全的打印
+    with print_lock:
+        print(f"\n{'='*60}")
+        print(f"[线程 {threading.current_thread().name}] [{index}/{total}] 处理: {title}")
+        print(f"{'='*60}")
+
+    try:
+        # 转换 SRT 为文本
+        srt_text = srt_to_text(srt_file)
+
+        with print_lock:
+            print(f"📄 文本长度: {len(srt_text):,} 字符")
+            print(f"🤖 正在调用 Gemini API...")
+
+        # 每个线程创建自己的客户端
+        summarizer = GeminiSummarizer(model=model, api_key=api_key)
+        result = summarizer.generate_summary(srt_text, title)
+
+        video_elapsed = time.time() - video_start_time
+
+        if result['success']:
+            input_tokens = result.get('input_tokens', 0)
+            output_tokens = result.get('output_tokens', 0)
+            total_tokens_used = result['tokens']
+
+            with print_lock:
+                print(f"  ✅ 成功!")
+                print(f"  📊 Tokens: 输入 {input_tokens:,} | 输出 {output_tokens:,} | 总计 {total_tokens_used:,}")
+                print(f"  📝 摘要长度: {len(result['summary']):,} 字符")
+                print(f"  ⏱️  耗时: {video_elapsed:.2f}秒")
+
+            return {
+                'title': title,
+                'summary': result['summary'],
+                'file': srt_file.name,
+                'index': index,
+                'success': True,
+                'tokens': total_tokens_used,
+                'input_tokens': input_tokens,
+                'output_tokens': output_tokens
+            }
+        else:
+            with print_lock:
+                print(f"  ❌ 失败: {result.get('error', '未知错误')}")
+                print(f"  ⏱️  耗时: {video_elapsed:.2f}秒")
+
+            return {
+                'title': title,
+                'summary': f"**处理失败**: {result.get('error', '未知错误')}",
+                'file': srt_file.name,
+                'index': index,
+                'success': False,
+                'failed': True,
+                'error': result.get('error', '未知错误')
+            }
+
+    except Exception as e:
+        video_elapsed = time.time() - video_start_time
+        with print_lock:
+            print(f"  ❌ 异常: {str(e)}")
+            print(f"  ⏱️  耗时: {video_elapsed:.2f}秒")
+
+        return {
+            'title': title,
+            'summary': f"**处理异常**: {str(e)}",
+            'file': srt_file.name,
+            'index': index,
+            'success': False,
+            'failed': True,
+            'error': str(e)
+        }
+
+
+def process_subtitles(subtitle_dir: str, model: str = 'flash-lite',
+                      custom_prompt: str = None, max_workers: int = 3) -> tuple:
+    """
+    处理字幕文件夹，生成摘要和汇总报告（支持并发）
 
     Args:
         subtitle_dir: 字幕文件夹路径
         model: Gemini 模型
         custom_prompt: 自定义汇总提示词
+        max_workers: 最大并发数（默认3）
 
     Returns:
         (成功数量, 失败数量, 汇总报告路径)
@@ -488,29 +572,64 @@ def process_subtitles(subtitle_dir: str, model: str = 'flash-lite',
         return 0, 0, None
 
     print(f"📄 找到 {len(srt_files)} 个字幕文件")
+    print(f"⚡ 并发模式: {max_workers} 个线程同时处理")
     print("=" * 60)
 
-    # 初始化 Gemini
-    try:
-        summarizer = GeminiSummarizer(model=model)
-        print(f"🤖 使用模型: {summarizer.model_name}")
-        print(f"📦 SDK 版本: {'新版 google.genai' if USE_NEW_SDK else '旧版 google.generativeai'}")
-    except ValueError as e:
-        print(f"❌ {e}")
+    # 获取 API Key
+    api_key = get_api_key()
+    if not api_key:
+        print("❌ 未找到 API Key")
         return 0, 0, None
 
-    # 处理每个 SRT 文件
+    # 开始计时
+    start_time = time.time()
+
+    # 报告文件路径
+    output_dir = subtitle_path.parent
+    report_path = output_dir / f"{author_name}_AI总结.md"
+
+    # 线程安全的结果存储
+    results_lock = threading.Lock()
+    all_results = []
+
+    # 处理结果的回调
+    def callback(future):
+        result = future.result()
+        with results_lock:
+            all_results.append(result)
+
+    # 使用线程池并发处理
+    with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="Worker") as executor:
+        # 提交所有任务
+        futures = []
+        for i, srt_file in enumerate(srt_files, 1):
+            future = executor.submit(process_single_video, srt_file, i, len(srt_files), model, api_key)
+            futures.append(future)
+
+        # 收集结果
+        for future in futures:
+            future.result()
+
+    # 按原始顺序排序结果
+    all_results.sort(key=lambda x: x['index'])
+
+    # 统计结果
     summaries = []
     success_count = 0
     fail_count = 0
     total_tokens = 0
     total_input_tokens = 0
     total_output_tokens = 0
-    start_time = time.time()
 
-    # 报告文件路径（提前定义，用于中间保存）
-    output_dir = subtitle_path.parent
-    report_path = output_dir / f"{author_name}_AI总结.md"
+    for r in all_results:
+        summaries.append(r)
+        if r['success']:
+            success_count += 1
+            total_tokens += r.get('tokens', 0)
+            total_input_tokens += r.get('input_tokens', 0)
+            total_output_tokens += r.get('output_tokens', 0)
+        else:
+            fail_count += 1
 
     def save_progress(summaries_list: list, current_success: int, current_fail: int,
                      current_tokens: int, current_input: int, current_output: int):
@@ -521,7 +640,6 @@ def process_subtitles(subtitle_dir: str, model: str = 'flash-lite',
             f.write(f"**视频数量**: {len(srt_files)}\n\n")
             f.write(f"**已处理**: {current_success + current_fail} / {len(srt_files)}\n\n")
             f.write(f"**成功**: {current_success} | **失败**: {current_fail}\n\n")
-            f.write(f"**使用模型**: {summarizer.model_name}\n\n")
             f.write(f"**Token**: 输入 {current_input:,} | 输出 {current_output:,} | 总计 {current_tokens:,}\n\n")
             f.write("---\n\n")
             f.write("## 各视频摘要（按处理顺序）\n\n")
@@ -538,74 +656,12 @@ def process_subtitles(subtitle_dir: str, model: str = 'flash-lite',
                     if item.get('failed'):
                         f.write(f"- **{item['title']}**: {item.get('error', '未知错误')}\n")
 
-    for i, srt_file in enumerate(srt_files, 1):
-        # 单个视频计时
-        video_start_time = time.time()
-
-        # 从文件名提取标题
-        title = srt_file.stem  # 去掉 .srt 后缀
-
-        print(f"\n{'='*60}")
-        print(f"[{i}/{len(srt_files)}] 处理: {title}")
-        print(f"{'='*60}")
-
-        # 转换 SRT 为文本
-        srt_text = srt_to_text(srt_file)
-        print(f"📄 文本长度: {len(srt_text):,} 字符")
-
-        # 生成摘要
-        print(f"🤖 正在调用 Gemini API 生成知识库笔记...")
-        result = summarizer.generate_summary(srt_text, title)
-
-        # 单个视频耗时
-        video_elapsed = time.time() - video_start_time
-
-        if result['success']:
-            input_tokens = result.get('input_tokens', 0)
-            output_tokens = result.get('output_tokens', 0)
-            total_tokens_used = result['tokens']
-
-            print(f"  ✅ 成功!")
-            print(f"  📊 Tokens: 输入 {input_tokens:,} | 输出 {output_tokens:,} | 总计 {total_tokens_used:,}")
-            print(f"  📝 摘要长度: {len(result['summary']):,} 字符")
-            print(f"  ⏱️  本视频耗时: {video_elapsed:.2f}秒")
-
-            summaries.append({
-                'title': title,
-                'summary': result['summary'],
-                'file': srt_file.name
-            })
-            success_count += 1
-            total_tokens += total_tokens_used
-            total_input_tokens += input_tokens
-            total_output_tokens += output_tokens
-        else:
-            print(f"  ❌ 失败: {result.get('error', '未知错误')}")
-            print(f"  ⏱️  本视频耗时: {video_elapsed:.2f}秒")
-            summaries.append({
-                'title': title,
-                'summary': f"**处理失败**: {result.get('error', '未知错误')}",
-                'file': srt_file.name,
-                'failed': True,
-                'error': result.get('error', '未知错误')
-            })
-            fail_count += 1
-
-        # 总进度
-        total_elapsed = time.time() - start_time
-        avg_time = total_elapsed / i
-        remaining = avg_time * (len(srt_files) - i)
-        print(f"  📈 总进度: {total_elapsed:.2f}秒 | 预计剩余: {remaining:.2f}秒")
-
-        # 每 5 个视频保存一次进度
-        if i % 5 == 0:
-            save_progress(summaries, success_count, fail_count, total_tokens,
-                        total_input_tokens, total_output_tokens)
-            print(f"  💾 进度已保存 ({i}/{len(srt_files)})")
-
-    # 生成最终汇总报告
+<arg_value>    # 生成最终汇总报告
     print("\n" + "=" * 60)
     print(f"📝 生成最终汇总报告...")
+
+    # 创建 summarizer 用于生成总报告
+    summarizer = GeminiSummarizer(model=model, api_key=api_key)
 
     # 过滤出成功的摘要用于生成总报告
     successful_summaries = [s for s in summaries if not s.get('failed')]
@@ -663,8 +719,8 @@ def main():
     # 处理指定作者的字幕文件夹
     python gemini_subtitle_summary.py "output/subtitles/小天fotos"
 
-    # 指定汇总主题
-    python gemini_subtitle_summary.py "output/subtitles/小天fotos" -p "分析这个UP主的内容特色"
+    # 指定并发数（默认3）
+    python gemini_subtitle_summary.py "output/subtitles/小天fotos" -j 5
 
     # 指定Gemini模型
     python gemini_subtitle_summary.py "output/subtitles/小天fotos" --model flash-lite
@@ -674,13 +730,15 @@ def main():
     parser.add_argument('subtitle_dir', help='字幕文件夹路径（作者文件夹）')
     parser.add_argument('-m', '--model', choices=['flash', 'flash-lite', 'pro'],
                         default='flash-lite', help='Gemini 模型（默认: flash-lite）')
+    parser.add_argument('-j', '--jobs', type=int, default=3,
+                        help='并发处理数（默认: 3）')
     parser.add_argument('-p', '--prompt', help='自定义汇总提示词')
     parser.add_argument('--api-key', help='Gemini API Key（覆盖配置文件）')
 
     args = parser.parse_args()
 
     # 处理字幕
-    process_subtitles(args.subtitle_dir, args.model, args.prompt)
+    process_subtitles(args.subtitle_dir, args.model, args.prompt, args.jobs)
 
 
 if __name__ == "__main__":
