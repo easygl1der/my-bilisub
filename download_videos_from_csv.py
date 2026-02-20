@@ -46,6 +46,90 @@ if sys.platform == 'win32':
 # 从 fetch_bilibili_videos.py 复制的 B 站 Cookie
 BILI_COOKIE = "buvid3=ED836AB2-1A1F-83B3-C368-EC717E8514CC52442infoc; b_nut=1768880952; lang=zh-Hans; theme-tip-show=SHOWED; buvid4=E6C199FE-5C98-198C-D77F-9B183C96AC6657438-026012011-zxmN2%2Bh1P%2F0eoan1hmmTzg%3D%3D; buvid_fp=bdde8cc73192655bb657c6b1b634831a; rpdid=|(Jl|J~JlJu)0J'u~Y)))u|Rl; theme-avatar-tip-show=SHOWED; DedeUserID=352314171; DedeUserID__ckMd5=8753aa0a6f5400e0; CURRENT_QUALITY=80; bili_ticket=eyJhbGciOiJIUzI1NiIsImtpZCI6InMwMyIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzEzNTA4OTgsImlhdCI6MTc3MTA5MTYzOCwicGx0IjotMX0.7NGUxpL_Kpz6MIafuGccDUrwQ0MYWTJIdZbcWzRFbK0; bili_ticket_expires=1771350838; SESSDATA=340e7534%2C1786643702%2C8ff5f%2A22CjBmNdSHwh1cJexOwoyFWM5LODSzCLixmDSo8umHTW2VrYyVmwwZMAH0xptDSCSuoaoSVnJ1UF9Lc0pockFlLTlKMEYteUdfNFhSbUxYTDlZak1sMHd1MHlpRTJKUzg3WGpYbVpNbEFNNlZyczJuMUZObW5mOVgtWjJQZnJ0TFhHY1NnbnA1c1lRIIEC; bili_jct=00bda0ae20a58226c7ab7c0198f889e8; bmg_af_switch=1; bmg_src_def_domain=i2.hdslb.com; sid=8khlk9a0; bp_t_offset_352314171=1169997504301760512; CURRENT_FNVAL=2000; home_feed_column=4; brows"
 
+# ==================== YouTube Cookie 配置 ====================
+# YouTube 下载可能需要 cookies.txt 文件来避免 403 错误
+# 可以使用浏览器扩展 "Get cookies.txt LOCALLY" 导出 YouTube cookies
+# 保存为 cookies_youtube.txt 放在当前目录下
+YOUTUBE_COOKIE_FILE = "cookies_youtube.txt"
+YOUTUBE_COOKIE_FILE_ALT = "youtube_cookies.txt"  # 备用文件名
+
+# Chrome cookies 路径（Windows）
+CHROME_COOKIE_PATHS = [
+    os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data\Default\Cookies"),
+    os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data\Default\Network\Cookies"),
+]
+
+# Edge cookies 路径（Windows）
+EDGE_COOKIE_PATHS = [
+    os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Edge\User Data\Default\Cookies"),
+    os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Edge\User Data\Default\Network\Cookies"),
+]
+
+
+def get_browser_cookies_youtube() -> str:
+    """
+    尝试从浏览器获取 YouTube 的 cookies
+
+    Returns:
+        cookies 字符串，失败返回 None
+    """
+    try:
+        import sqlite3
+        import tempfile
+        from shutil import copy2
+
+        # 查找浏览器 cookie 文件
+        cookie_paths = EDGE_COOKIE_PATHS + CHROME_COOKIE_PATHS
+        cookie_file = None
+
+        for path in cookie_paths:
+            if os.path.exists(path):
+                cookie_file = path
+                break
+
+        if not cookie_file:
+            return None
+
+        # 复制 cookie 文件（因为浏览器可能正在使用）
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.db') as tmp:
+            tmp_path = tmp.name
+
+        try:
+            copy2(cookie_file, tmp_path)
+        except Exception:
+            return None
+
+        # 读取 cookies
+        conn = sqlite3.connect(tmp_path)
+        cursor = conn.cursor()
+
+        # 查询 YouTube cookies
+        cursor.execute("""
+            SELECT name, value
+            FROM cookies
+            WHERE host_key LIKE '%.youtube.com'
+            OR host_key = '.youtube.com'
+        """)
+
+        cookies = {}
+        for name, value in cursor.fetchall():
+            if name in ['SID', 'HSID', 'SSID', 'APISID', 'SAPISID', 'LOGIN_INFO', 'PREF', 'VISITOR_INFO1_LIVE']:
+                cookies[name] = value
+
+        conn.close()
+        os.unlink(tmp_path)
+
+        # 检查关键 cookie 是否存在
+        if 'SID' not in cookies or 'HSID' not in cookies:
+            return None
+
+        # 转换为 cookie 字符串
+        cookie_str = '; '.join([f"{name}={value}" for name, value in cookies.items()])
+        return cookie_str
+
+    except Exception as e:
+        return None
+
 
 # ==================== 进度条 ====================
 
@@ -704,12 +788,62 @@ def download_video(video_info: dict, index: int, total: int, output_dir: Path, h
 
         # YouTube特殊处理（使用最佳质量）
         elif platform == 'youtube':
+            # YouTube 下载需要特殊处理，因为可能被 403 阻止
             ydl_opts.update({
-                'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+                'format': 'bestvideo+bestaudio/best',  # 简化格式选择
                 'http_headers': {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                }
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                },
+                # SSL/网络相关选项
+                'nocheckcertificate': True,  # 绕过SSL证书问题
+                'extractor_retries': 2,  # 减少重试次数以便更快失败
+                'fragment_retries': 3,
+                'retries': 3,
+                'file_access_retries': 2,
+                'socket_timeout': 30,
+                # 使用外部下载器（如果有 aria2）
+                # 'external_downloader': 'aria2c',
+                # 'external_downloader_args': ['-x', '16', '-k', '1M'],
+                # 禁用调用主页
+                'no_call_home': True,
+                'break_on_reject': False,  # 遇到被阻止的格式继续尝试其他格式
             })
+
+            # 检查是否设置了代理
+            import os
+            if os.environ.get('HTTP_PROXY') or os.environ.get('HTTPS_PROXY'):
+                proxy = os.environ.get('HTTPS_PROXY') or os.environ.get('HTTP_PROXY')
+                ydl_opts['proxy'] = proxy
+                print(f"   └─ 🌐 使用代理: {proxy}")
+
+            # 检查是否有 YouTube cookies 文件
+            cookie_content = None
+            cookie_file = Path(YOUTUBE_COOKIE_FILE)
+            cookie_file_alt = Path(YOUTUBE_COOKIE_FILE_ALT)
+
+            if cookie_file.exists():
+                with open(cookie_file, 'r', encoding='utf-8') as f:
+                    cookie_content = f.read().strip()
+                print(f"   └─ 🍪 使用 Cookie 文件: {YOUTUBE_COOKIE_FILE}")
+            elif cookie_file_alt.exists():
+                with open(cookie_file_alt, 'r', encoding='utf-8') as f:
+                    cookie_content = f.read().strip()
+                print(f"   └─ 🍪 使用 Cookie 文件: {YOUTUBE_COOKIE_FILE_ALT}")
+
+            if cookie_content:
+                # 添加 cookies 到请求头
+                ydl_opts['http_headers']['Cookie'] = cookie_content
+                ydl_opts['cookiefile'] = str(cookie_file if cookie_file.exists() else cookie_file_alt)
+            else:
+                # 尝试从浏览器获取 cookies
+                browser_cookies = get_browser_cookies_youtube()
+                if browser_cookies:
+                    ydl_opts['http_headers']['Cookie'] = browser_cookies
+                    print(f"   └─ 🍪 使用浏览器 Cookies")
+                else:
+                    print(f"   └─ ⚠️  未找到 Cookies，可能遇到 403 错误")
 
         # 自定义headers优先
         if headers:
@@ -719,6 +853,10 @@ def download_video(video_info: dict, index: int, total: int, output_dir: Path, h
 
         # 执行下载
         start_time = time.time()
+
+        # 调试信息
+        if platform == 'youtube':
+            print(f"   └─ 开始连接 YouTube...")
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
@@ -750,6 +888,19 @@ def download_video(video_info: dict, index: int, total: int, output_dir: Path, h
 
     except yt_dlp.utils.DownloadError as e:
         error_msg = str(e)
+
+        # YouTube 403 错误处理
+        if platform == 'youtube' and ('403' in error_msg or 'Forbidden' in error_msg):
+            print(f"\r   └─ ❌ YouTube 下载被阻止 (403 Forbidden){' ' * 20}")
+            print(f"   └─ 💡 解决方法:")
+            print(f"      1. 使用浏览器扩展 'Get cookies.txt LOCALLY' 导出 YouTube cookies")
+            print(f"      2. 将 cookies 保存为 {YOUTUBE_COOKIE_FILE} 放在当前目录")
+            print(f"      3. 或使用代理: set HTTPS_PROXY=http://127.0.0.1:7890")
+            result['error'] = f"YouTube 403: 需要使用 cookies 或代理"
+            result['elapsed'] = time.time() - start_time
+            print(f"\r   └─ ❌ {result['error'][:60]}{' ' * 20}")
+            return result
+
         # 检查是否是因为没有视频格式（可能是图文）
         if 'No video formats found' in error_msg or 'No media found' in error_msg:
             print(f"\r   └─ ⚠️  无视频格式，尝试作为图文处理...{' ' * 20}")
