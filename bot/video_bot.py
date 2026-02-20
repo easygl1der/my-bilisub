@@ -35,8 +35,10 @@ if sys.platform == 'win32':
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
 # ==================== 配置 ====================
-CONFIG_PATH = Path("config/bot_config.json")
-OUTPUT_DIR = Path("output/bot")
+# 注意：从 bot/ 目录运行，需要调整相对路径
+SCRIPT_DIR = Path(__file__).parent
+CONFIG_PATH = SCRIPT_DIR.parent / "config" / "bot_config.json"
+OUTPUT_DIR = SCRIPT_DIR.parent / "output" / "bot"
 TASKS_DIR = Path("bot_tasks")
 MAX_QUEUE_SIZE = 10
 MAX_CONCURRENT_TASKS = 1  # 同时处理的任务数
@@ -186,7 +188,7 @@ class VideoBotConfig:
         if not self.bot_token:
             raise ValueError(
                 "未配置 Bot Token！\n"
-                "请创建 config/bot_config.json 或设置 TELEGRAM_BOT_TOKEN 环境变量"
+                f"请创建 {CONFIG_PATH} 或设置 TELEGRAM_BOT_TOKEN 环境变量"
             )
 
         # 默认允许所有用户（生产环境建议限制）
@@ -268,15 +270,22 @@ class VideoProcessor:
         """语音识别"""
         self._update_progress(25, f"🎙️ 开始语音识别 (模型: {model})...")
 
+        # 切换到项目根目录执行脚本
+        original_dir = os.getcwd()
+        os.chdir(Path(__file__).parent.parent)
+
         cmd = [
-            'python', 'ultimate_transcribe.py',
+            sys.executable, 'ultimate_transcribe.py',
             '-u', self.task.url,
             '-m', model,
             '-f', 'srt,txt',
             '--no-ocr'
         ]
 
-        success, output = self._run_command(cmd, timeout=1800)
+        try:
+            success, output = self._run_command(cmd, timeout=1800)
+        finally:
+            os.chdir(original_dir)
 
         if success:
             # 查找生成的字幕文件
@@ -293,13 +302,20 @@ class VideoProcessor:
         """优化字幕"""
         self._update_progress(65, f"📝 开始优化字幕 (模式: {prompt_type})...")
 
+        # 切换到项目根目录执行脚本
+        original_dir = os.getcwd()
+        os.chdir(Path(__file__).parent.parent)
+
         cmd = [
-            'python', 'optimize_srt_glm.py',
+            sys.executable, 'optimize_srt_glm.py',
             '-s', srt_path,
             '-p', prompt_type
         ]
 
-        success, output = self._run_command(cmd, timeout=600)
+        try:
+            success, output = self._run_command(cmd, timeout=600)
+        finally:
+            os.chdir(original_dir)
 
         optimized_files = list(Path("output/optimized_srt").glob("*_optimized.srt"))
         if optimized_files:
@@ -313,14 +329,21 @@ class VideoProcessor:
         """AI 视频分析"""
         self._update_progress(85, "🤖 开始 AI 视频分析...")
 
+        # 切换到项目根目录执行脚本
+        original_dir = os.getcwd()
+        os.chdir(Path(__file__).parent.parent)
+
         cmd = [
-            'python', 'video_understand_gemini.py',
+            sys.executable, 'analysis/video_understand_gemini.py',
             '-video', video_path,
             '-m', mode,
             '-o', str(self.output_dir / "analysis")
         ]
 
-        success, output = self._run_command(cmd, timeout=1200)
+        try:
+            success, output = self._run_command(cmd, timeout=1200)
+        finally:
+            os.chdir(original_dir)
 
         # 查找分析结果
         analysis_files = list(self.output_dir.glob("*.md"))

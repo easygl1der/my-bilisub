@@ -30,8 +30,8 @@ if sys.platform == 'win32':
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
 
-# 配置文件路径
-COOKIE_FILE = Path(__file__).parent / "config" / "cookies.txt"
+# 配置文件路径（从 bot/ 目录需要回到父目录的 config/）
+COOKIE_FILE = Path(__file__).parent.parent / "config" / "cookies.txt"
 
 
 class CookieManager:

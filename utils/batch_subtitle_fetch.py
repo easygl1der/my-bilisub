@@ -25,10 +25,10 @@ if sys.platform == "win32":
 
 
 # ============= 配置区 =============
-# Cookie 文件路径
-COOKIE_FILE = Path(__file__).parent / "config" / "cookies_bilibili_api.txt"
-# 字幕输出目录
-SUBTITLE_OUTPUT_DIR = Path(__file__).parent / "output" / "subtitles"
+# Cookie 文件路径（从 utils/ 回到父目录的 config/）
+COOKIE_FILE = Path(__file__).parent.parent / "config" / "cookies_bilibili_api.txt"
+# 字幕输出目录（从 utils/ 回到父目录的 output/）
+SUBTITLE_OUTPUT_DIR = Path(__file__).parent.parent / "output" / "subtitles"
 # =================================
 
 
@@ -227,8 +227,14 @@ def generate_summary_md(videos: list, author_name: str, output_dir: Path, total_
     return md_path
 
 
-async def process_batch(csv_path: str):
-    """批量处理视频字幕提取"""
+async def process_batch(csv_path: str, limit: int = None, force: bool = False):
+    """批量处理视频字幕提取
+
+    Args:
+        csv_path: CSV 文件路径
+        limit: 限制处理视频数量（默认：处理全部）
+        force: 强制重新获取，不跳过已成功的视频
+    """
     csv_file = Path(csv_path)
 
     if not csv_file.exists():
@@ -245,6 +251,11 @@ async def process_batch(csv_path: str):
     if not videos:
         print("错误: CSV 文件为空或格式不正确")
         return
+
+    # 应用限制
+    if limit and limit < len(videos):
+        videos = videos[:limit]
+        print(f"限制处理数量: {limit}")
 
     print(f"找到 {len(videos)} 个视频")
     print("=" * 60)
@@ -272,9 +283,9 @@ async def process_batch(csv_path: str):
             skip_count += 1
             continue
 
-        # 如果已经有成功状态，可以选择跳过
+        # 如果已经有成功状态，可以选择跳过（除非 force=True）
         current_status = video_data.get('subtitle_status', '').strip()
-        if current_status == 'success':
+        if current_status == 'success' and not force:
             print(f"\n[{i}/{len(videos)}] 跳过: {title[:30]}... (已成功)")
             skip_count += 1
             continue
@@ -333,15 +344,28 @@ async def process_batch(csv_path: str):
 
 
 async def main():
-    if len(sys.argv) < 2:
-        print("使用方法: python batch_subtitle_fetch.py <csv_file_path>")
-        print("示例: python batch_subtitle_fetch.py \"MediaCrawler/bilibili_videos_output/小天fotos.csv\"")
-        return
+    import argparse
 
-    csv_path = sys.argv[1]
+    parser = argparse.ArgumentParser(
+        description="批量提取B站字幕并更新CSV状态",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+示例:
+  python batch_subtitle_fetch.py "data/videos.csv"
+  python batch_subtitle_fetch.py "data/videos.csv" --limit 100
+  python batch_subtitle_fetch.py "data/videos.csv" --limit 50 --force
+        """
+    )
+    parser.add_argument("csv_file", help="CSV 文件路径")
+    parser.add_argument("--limit", "-l", type=int, default=None,
+                        help="限制处理视频数量（默认：处理全部）")
+    parser.add_argument("--force", "-f", action="store_true",
+                        help="强制重新获取，跳过已成功的视频")
+
+    args = parser.parse_args()
 
     try:
-        await process_batch(csv_path)
+        await process_batch(args.csv_file, limit=args.limit, force=args.force)
     except Exception as e:
         print(f"\n错误: {e}")
         import traceback
