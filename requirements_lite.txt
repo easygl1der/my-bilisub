@@ -1,0 +1,14 @@
+# 轻量版依赖 - 用于 Railway 部署
+# 镜像大小 < 500MB
+
+# Telegram Bot
+python-telegram-bot>=21.0
+
+# 视频下载
+yt-dlp>=2023.0.0
+
+# Gemini AI
+google-generativeai>=0.8.0
+
+# 基础依赖
+requests>=2.25.0

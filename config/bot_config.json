@@ -1,4 +1,5 @@
 {
   "bot_token": "8514628240:AAHYRGBhQvCuNkFq7g-ZmexehOoflTM3KSQ",
-  "allowed_users": []
+  "allowed_users": [],
+  "proxy_url": "http://127.0.0.1:7890"
 }
