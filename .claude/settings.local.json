@@ -31,7 +31,10 @@
       "WebSearch",
       "mcp__zread__get_repo_structure",
       "Bash(curl:*)",
-      "Bash(set PYTHONUNBUFFERED=1:*)"
+      "Bash(set PYTHONUNBUFFERED=1:*)",
+      "Bash(timeout:*)",
+      "Bash(E:\\\\Anaconda\\\\python.exe:*)",
+      "Bash(npx @z_ai/coding-helper)"
     ]
   }
 }

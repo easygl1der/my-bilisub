@@ -162,6 +162,7 @@ class VideoBotConfig:
     def __init__(self):
         self.bot_token: Optional[str] = None
         self.allowed_users: List[int] = []  # 允许使用的用户ID
+        self.proxy_url: Optional[str] = None  # 代理设置
         self.load()
 
     def load(self):
@@ -172,12 +173,15 @@ class VideoBotConfig:
                     data = json.load(f)
                 self.bot_token = data.get('bot_token')
                 self.allowed_users = data.get('allowed_users', [])
+                self.proxy_url = data.get('proxy_url')
             except Exception as e:
                 print(f"⚠️ 配置加载失败: {e}")
 
         # 环境变量优先
         if not self.bot_token:
             self.bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
+        if not self.proxy_url:
+            self.proxy_url = os.environ.get('TELEGRAM_PROXY_URL')
 
         if not self.bot_token:
             raise ValueError(
@@ -402,7 +406,16 @@ class VideoBot:
         TASKS_DIR.mkdir(parents=True, exist_ok=True)
 
         # 初始化 Telegram Application
-        self.application = Application.builder().token(self.config.bot_token).build()
+        builder = Application.builder().token(self.config.bot_token)
+
+        # 配置代理（如果设置）
+        if self.config.proxy_url:
+            from telegram.request import HTTPXRequest
+            request = HTTPXRequest(proxy=self.config.proxy_url)
+            builder = builder.connection_pool_request(request)
+            print(f"🌐 使用代理: {self.config.proxy_url}")
+
+        self.application = builder.build()
 
         # 注册处理器
         self.application.add_handler(CommandHandler("start", self.cmd_start))
