@@ -32,10 +32,11 @@
 
 ### 5. AI视频内容分析（Gemini）
 - **智能视频理解**：上传视频到Gemini API进行深度分析
-- **多种分析模式**：summary/brief/detailed/transcript
+- **多种分析模式**：knowledge（默认）/summary/brief/detailed/transcript
+- **知识库模式**：生成结构化笔记，包含视频大意、核心观点、金句提取、书面文稿等
 - **自动模型切换**：当配额不足时自动切换模型
-- **批量处理支持**：支持目录批量分析
-- **知识库构建**：结构化输出，适合构建第二大脑
+- **批量处理支持**：支持目录批量分析，自动跳过已完成视频
+- **Token统计**：详细的API调用统计
 
 ## 文件结构
 
@@ -43,9 +44,9 @@
 biliSub/
 ├── 核心工具
 │   ├── ultimate_transcribe.py      # 主工具（推荐使用）
-│   ├── streaming_transcribe_v2.py  # 流式处理工具
+│   ├── batch_process_videos.py     # 批量处理工具（一键完成）
 │   ├── check_subtitle.py           # 字幕检查工具
-│   └── simple_ocr_test.py          # OCR测试工具
+│   └── streaming_transcribe_v2.py  # 流式处理工具
 │
 ├── 字幕优化
 │   ├── optimize_srt_glm.py         # GLM优化工具
@@ -58,7 +59,11 @@ biliSub/
 │   └── config_api.py               # API密钥配置
 │
 ├── 文档
+│   ├── README.md                   # 项目说明
+│   ├── QUICK_START.md              # 快速开始指南
 │   ├── SRT_OPTIMIZATION_GUIDE.md   # 字幕优化指南
+│   ├── BATCH_PROCESSING_GUIDE.md   # 批量处理指南
+│   ├── config_guide.md             # 配置指南
 │   └── PROJECT_SUMMARY.md          # 本文档
 │
 └── 输出目录
@@ -71,7 +76,20 @@ biliSub/
 
 ## 完整使用流程
 
-### 场景1：单个B站视频处理
+### 场景0：一键批量处理（最简单）
+
+```bash
+# 处理单个视频（下载 + 识别 + 优化 一步完成）
+python batch_process_videos.py -u "视频URL" -m medium -p tech
+
+# 批量处理（从文件读取URL列表）
+python batch_process_videos.py -i videos.txt -m medium -p tech
+
+# 查看处理报告
+cat batch_report.md
+```
+
+### 场景1：单个B站视频处理（分步）
 
 ```bash
 # 1. 下载视频并生成字幕（一步完成）
@@ -122,10 +140,11 @@ export GEMINI_API_KEY='your-key'
 # 方式2: 在config_api.py中添加
 # API_CONFIG = {"gemini": {"api_key": "your-key"}}
 
-# 2. 分析单个视频（默认summary模式）
+# 2. 分析单个视频（默认knowledge模式，生成知识库型笔记）
 python video_understand_gemini.py -video "path/to/video.mp4"
 
 # 3. 使用不同提示词模式
+python video_understand_gemini.py -video "video.mp4" -m knowledge  # 知识库型笔记（推荐）
 python video_understand_gemini.py -video "video.mp4" -m brief      # 简洁总结
 python video_understand_gemini.py -video "video.mp4" -m detailed   # 详细分析
 python video_understand_gemini.py -video "video.mp4" -m transcript # 提取对话
@@ -343,9 +362,14 @@ API_CONFIG = {
 
 ### 5. Gemini使用建议
 - **模型选择**：flash-lite（免费额度高，推荐）/ flash（速度快）/ pro（精度高）
-- **模式选择**：summary（默认）/ brief（快速）/ detailed（深度）/ transcript（逐字稿）
+- **模式选择**：
+  - `knowledge`（默认）- 知识库型笔记，包含核心观点、金句提取、书面文稿等
+  - `brief` - 快速总结（200字以内）
+  - `summary` - 详细总结
+  - `detailed` - 深度分析（包含论点论据结构）
+  - `transcript` - 逐字稿提取
 - **视频大小**：建议2GB以内，过大会导致上传和处理时间过长
-- **批量分析**：避免同时分析过多视频，注意API配额限制
+- **批量分析**：自动并发（flash-lite: 10线程），注意API配额限制
 
 ## 已知限制
 
@@ -381,16 +405,22 @@ API_CONFIG = {
 ---
 
 **最后更新**：2026年2月
-**版本**：v1.1
+**版本**：v1.2
 
 ## 更新日志
+
+### v1.2 (2026-02)
+- 新增 `batch_process_videos.py` - 一键完成下载+识别+优化的批量处理工具
+- Gemini AI 视频分析新增 `knowledge` 模式（默认）
+- 知识库模式支持：视频大意、核心观点（三段论）、金句提取、书面文稿
+- Gemini 批量分析支持自动并发处理
+- 完善文档和快速开始指南
 
 ### v1.1 (2026-02)
 - 新增 `video_understand_gemini.py` - Gemini AI视频内容分析工具
 - 支持多种分析模式（summary/brief/detailed/transcript）
 - 支持批量视频分析
 - 自动模型切换功能（配额不足时）
-- 完善的文档和使用说明
 
 ### v1.0 (2025-02)
 - 初始版本

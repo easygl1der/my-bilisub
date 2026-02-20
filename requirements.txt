@@ -32,6 +32,10 @@ python-multipart>=0.0.6
 starlette>=0.27.0
 email-validator>=2.0.0
 
+# Gemini AI 视频分析
+google-generativeai>=0.8.0
+
 # 可选: OCR功能 (需要额外安装)
 # paddleocr>=2.7.0
 # opencv-python>=4.8.0
+# paddlepaddle>=2.6.0
