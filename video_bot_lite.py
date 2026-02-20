@@ -15,7 +15,7 @@ import logging
 import subprocess
 from pathlib import Path
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Dict
 from dataclasses import dataclass, field
 from enum import Enum
 from collections import deque
@@ -124,9 +124,6 @@ class TaskQueue:
                 "active": len(self.active_tasks),
                 "total_processed": self.task_counter
             }
-
-
-from typing import Dict
 
 
 class VideoBotConfig:
