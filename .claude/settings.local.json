@@ -35,7 +35,8 @@
       "Bash(timeout:*)",
       "Bash(E:\\\\Anaconda\\\\python.exe:*)",
       "Bash(npx @z_ai/coding-helper)",
-      "Bash(pip show:*)"
+      "Bash(pip show:*)",
+      "Bash(find:*)"
     ]
   }
 }

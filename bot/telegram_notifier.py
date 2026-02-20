@@ -17,15 +17,20 @@ from datetime import datetime
 class TelegramNotifier:
     """Telegram 通知器"""
 
-    def __init__(self, token: str = None, chat_id: str = None, config_path: str = "config/telegram_config.json"):
+    def __init__(self, token: str = None, chat_id: str = None, config_path: str = None):
         """
         初始化通知器
 
         Args:
             token: Bot Token（可选，优先从配置文件读取）
             chat_id: Chat ID（可选，优先从配置文件读取）
-            config_path: 配置文件路径
+            config_path: 配置文件路径（默认为 config/telegram_config.json）
         """
+        if config_path is None:
+            # 从 bot/ 目录运行，需要相对路径调整
+            script_dir = Path(__file__).parent
+            config_path = script_dir.parent / "config" / "telegram_config.json"
+
         self.token = token
         self.chat_id = chat_id
         self.config_path = Path(config_path)
@@ -37,7 +42,7 @@ class TelegramNotifier:
         if not self.token or not self.chat_id:
             raise ValueError(
                 "Token 和 Chat ID 未配置！\n"
-                "请创建 config/telegram_config.json 文件，或通过参数传入。\n"
+                f"请创建 {self.config_path} 文件，或通过参数传入。\n"
                 "格式: {\"bot_token\": \"xxx\", \"chat_id\": \"xxx\"}"
             )
 
@@ -200,8 +205,13 @@ class TelegramNotifier:
         return self.send_message(message)
 
 
-def save_config(token: str, chat_id: str, config_path: str = "config/telegram_config.json"):
+def save_config(token: str, chat_id: str, config_path: str = None):
     """保存配置到文件"""
+    if config_path is None:
+        # 从 bot/ 目录运行，需要相对路径调整
+        script_dir = Path(__file__).parent
+        config_path = script_dir.parent / "config" / "telegram_config.json"
+
     config_path = Path(config_path)
     config_path.parent.mkdir(parents=True, exist_ok=True)
 

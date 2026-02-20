@@ -74,7 +74,7 @@ def setup_mediacrawler_config(note_url: str):
     """配置 MediaCrawler"""
     try:
         # 导入配置
-        sys.path.insert(0, str(Path(__file__).parent / "MediaCrawler"))
+        sys.path.insert(0, str(Path(__file__).parent.parent.parent / "MediaCrawler"))
         import config
 
         # 设置平台和类型
@@ -121,7 +121,7 @@ def setup_mediacrawler_config(note_url: str):
 async def run_crawler():
     """运行爬虫"""
     try:
-        sys.path.insert(0, str(Path(__file__).parent / "MediaCrawler"))
+        sys.path.insert(0, str(Path(__file__).parent.parent.parent / "MediaCrawler"))
         from main import main as crawler_main
         await crawler_main()
         return True

@@ -363,7 +363,7 @@ class MediaCrawlerSource(CommentSource):
     """MediaCrawler 输出目录数据源"""
 
     def __init__(self):
-        self.media_crawler_path = Path(__file__).parent / "MediaCrawler"
+        self.media_crawler_path = Path(__file__).parent.parent / "MediaCrawler"
 
     def fetch_comments(self, url: str, max_comments: int = 100) -> List[Dict]:
         """从 MediaCrawler 输出目录读取评论"""
@@ -481,7 +481,7 @@ class XhsCommentSource(CommentSource):
     """小红书评论数据源 - 通过 MediaCrawler"""
 
     def __init__(self):
-        self.media_crawler_path = Path(__file__).parent / "MediaCrawler"
+        self.media_crawler_path = Path(__file__).parent.parent / "MediaCrawler"
         self.has_crawler = (self.media_crawler_path / "main.py").exists()
 
     def fetch_comments(self, url: str, max_comments: int = 100) -> List[Dict]:

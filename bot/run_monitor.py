@@ -38,8 +38,8 @@ if sys.platform == 'win32':
 # 监控的关键词
 DEFAULT_KEYWORDS = "AI教授,ML招生,计算机视觉,博士申请,导师招生,CVPR,ICCV"
 
-# MediaCrawler 路径
-MEDIA_CRAWLER_PATH = Path(__file__).parent / "MediaCrawler"
+# MediaCrawler 路径（从 bot/ 目录回到父目录）
+MEDIA_CRAWLER_PATH = Path(__file__).parent.parent / "MediaCrawler"
 
 # 爬取帖子数量
 CRAWL_COUNT = 20
