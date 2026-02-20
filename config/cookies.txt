@@ -1,0 +1,50 @@
+# 统一 Cookie 配置文件
+#
+# 使用说明：
+# 1. 从浏览器复制 Cookie 值，粘贴到下面对应的位置
+# 2. 保存文件即可，所有程序会自动从这里读取
+# 3. Cookie 过期时，只需更新此文件
+#
+# ============================================
+# 小红书 (XiaoHongShu) Cookie
+# --------------------------------------------
+# 获取方式：
+# 1. 打开 Chrome 浏览器，访问 https://www.xiaohongshu.com 并登录
+# 2. 按 F12 打开开发者工具
+# 3. 切换到 Application 标签 -> Cookies -> https://www.xiaohongshu.com
+# 4. 复制以下 Cookie 的值：
+#
+# 关键 Cookie: a1, web_session, webId
+# 格式：name=value; name2=value2; ...
+
+[xiaohongshu]
+a1=19c72083b1ezv6ml7y7pz5sn08byjrw1jluju89dr50000339161
+web_session=040069b10fb462560bfe7e76a63b4b24ccd424
+webId=50b111ff33792d12d971f3ca8cd47cbf
+
+# 完整 Cookie 字符串格式（用于某些程序）
+xiaohongshu_full=a1=19c72083b1ezv6ml7y7pz5sn08byjrw1jluju89dr50000339161; web_session=040069b10fb462560bfe7e76a63b4b24ccd424; webId=50b111ff33792d12d971f3ca8cd47cbf
+
+# ============================================
+# Bilibili Cookie
+# --------------------------------------------
+# 关键 Cookie: SESSDATA, bili_jct, DedeUserID
+
+[bilibili]
+# 请填入你的 Bilibili Cookie
+SESSDATA=
+bili_jct=
+DedeUserID=
+
+# ============================================
+# YouTube Cookie (如果需要)
+# --------------------------------------------
+
+[youtube]
+# 请填入你的 YouTube Cookie（如果需要）
+# 通常不需要，除非要访问受限制的内容
+
+# ============================================
+# 更新日志
+# --------------------------------------------
+# 2026-02-20: 初始化配置

@@ -1,0 +1,84 @@
+# 第二大脑 - 配置文件
+
+# 监控的博主列表
+creators:
+  # B站博主示例
+  - platform: bilibili
+    uid: "21814045"  # 老师好我叫何同学
+    name: "何同学"
+    category: "科技"
+    enabled: true
+
+  # - platform: bilibili
+  #   uid: "153818"  # 小白测评
+  #   name: "小白测评"
+  #   category: "科技"
+  #   enabled: true
+
+  # YouTube频道示例
+  # - platform: youtube
+  #   uid: "UCBJycsmduvYEL83R_U4JriQ"  # 频道ID
+  #   name: "示例频道"
+  #   category: "科技"
+  #   enabled: true
+
+# 监控设置
+monitor:
+  check_interval: 300        # 检查间隔（秒），默认5分钟
+  max_videos_per_check: 30   # 每次最多获取视频数
+  lookback_days: 7           # 首次运行时回溯天数
+
+# 分析设置
+analysis:
+  model: "flash-lite"        # Gemini模型 (flash-lite/flash/pro)
+  mode: "knowledge"          # 分析模式
+  max_concurrent: 10         # 并发数
+  auto_analyze: true         # 自动分析新视频
+
+# 新闻分类
+categories:
+  - 科技
+  - 财经
+  - 国际
+  - 民生
+  - 娱乐
+  - 体育
+  - 教育
+  - 其他
+
+# 数据存储
+database:
+  path: "data/second_brain.db"
+  backup_enabled: true
+
+# 推送设置
+notification:
+  # 控制台输出
+  console:
+    enabled: true
+
+  # 邮件推送（可选）
+  email:
+    enabled: false
+    to: "your@email.com"
+    smtp_host: "smtp.gmail.com"
+    smtp_port: 587
+    username: ""
+    password: ""
+
+  # Telegram推送（可选）
+  telegram:
+    enabled: false
+    bot_token: ""
+    chat_id: ""
+
+  # 每日简报
+  daily_digest:
+    enabled: true
+    time: "08:00"
+    timezone: "Asia/Shanghai"
+
+# 知识库设置
+knowledge_base:
+  output_dir: "knowledge_base"
+  format: "markdown"
