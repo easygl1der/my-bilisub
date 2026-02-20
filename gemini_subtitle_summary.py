@@ -27,6 +27,7 @@ import json
 import argparse
 import re
 import threading
+import csv
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Optional
@@ -41,7 +42,7 @@ except ImportError:
         import google.generativeai as genai
         USE_NEW_SDK = False
     except ImportError:
-        print("❌ 未安装 google-genai 或 google-generativeai 库")
+        print("未安装 google-genai 或 google-generativeai 库")
         print("请运行: pip install google-genai")
         sys.exit(1)
 
@@ -160,6 +161,124 @@ class GeminiClient:
                 'success': False,
                 'error': str(e)
             }
+
+
+# ==================== MD 汇总文件读取 ====================
+
+def parse_summary_md(md_path: Path) -> Dict[str, Dict]:
+    """
+    从汇总 MD 文件解析视频信息表格
+
+    Returns:
+        {标题: {序号, 标题, 链接, BV号, 时长, 播放量, 评论数, 发布时间}}
+    """
+    videos = {}
+
+    if not md_path.exists():
+        return videos
+
+    try:
+        with open(md_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        # 提取表格数据
+        in_table = False
+        for line in content.split('\n'):
+            # 跳过表头分隔线
+            if line.startswith('|:----'):
+                in_table = True
+                continue
+
+            # 检测表格结束
+            if in_table and not line.startswith('|'):
+                break
+
+            # 解析表格行
+            if in_table and line.startswith('|'):
+                parts = [p.strip() for p in line.split('|')[1:-1]]  # 去掉首尾空元素
+                if len(parts) >= 8:
+                    try:
+                        seq = parts[0]
+                        title = parts[1]
+                        link = parts[2]
+                        # 从链接中提取纯URL
+                        if '[' in link and '](' in link:
+                            link = link.split('](')[1].rstrip(')')
+                        bvid = parts[3]
+                        duration = parts[4]
+                        views = parts[5]
+                        comments = parts[6]
+                        pub_time = parts[7]
+
+                        # 用标题作为key
+                        videos[title] = {
+                            '序号': seq,
+                            '标题': title,
+                            '链接': link,
+                            'BV号': bvid,
+                            '时长': duration,
+                            '播放量': views,
+                            '评论数': comments,
+                            '发布时间': pub_time,
+                        }
+                    except (ValueError, IndexError):
+                        continue
+
+    except Exception as e:
+        print(f"⚠️ 读取 MD 汇总文件失败: {e}")
+
+    return videos
+
+
+def find_summary_md(subtitle_dir: Path) -> Optional[Path]:
+    """
+    查找对应的汇总 MD 文件
+    """
+    author_name = subtitle_dir.name
+    possible_paths = [
+        subtitle_dir.parent / f"{author_name}_汇总.md",
+        subtitle_dir / f"{author_name}_汇总.md",
+        subtitle_dir.parent / "output" / "subtitles" / f"{author_name}_汇总.md",
+    ]
+
+    for path in possible_paths:
+        if path.exists():
+            return path
+
+    # 在同级目录搜索
+    for md_file in subtitle_dir.parent.glob("*_汇总.md"):
+        if author_name in md_file.stem:
+            return md_file
+
+    return None
+
+
+def format_video_info_header(video_info: Dict, srt_filename: str) -> str:
+    """
+    格式化视频基本信息头部
+    """
+    if not video_info:
+        return f"> **视频文件**: {srt_filename}\n\n"
+
+    info_lines = [
+        "## 📹 视频信息",
+        f"| 项目 | 内容 |",
+        f"|------|------|",
+    ]
+
+    # 按顺序添加信息
+    order = ['序号', '标题', '链接', 'BV号', '时长', '播放量', '评论数', '发布时间']
+    for key in order:
+        value = video_info.get(key, '')
+        if value:
+            if key == '链接':
+                info_lines.append(f"| **{key}** | [{value}]({value}) |")
+            elif key == '标题':
+                info_lines.append(f"| **{key}** | {value} |")
+            else:
+                info_lines.append(f"| **{key}** | {value} |")
+
+    return '\n'.join(info_lines) + '\n\n---\n\n'
 
 
 # ==================== SRT 处理 ====================
@@ -457,7 +576,8 @@ class GeminiSummarizer:
 
 # ==================== 主处理逻辑 ====================
 
-def process_single_video(srt_file: Path, index: int, total: int, model: str, api_key: str) -> Dict:
+def process_single_video(srt_file: Path, index: int, total: int, model: str, api_key: str,
+                        csv_data: Dict[str, Dict] = None) -> Dict:
     """
     处理单个视频字幕（线程安全，用于并发）
 
@@ -565,6 +685,16 @@ def process_subtitles(subtitle_dir: str, model: str = 'flash-lite',
     print(f"📂 作者: {author_name}")
     print(f"📁 目录: {subtitle_path}")
 
+    # 查找并读取汇总 MD 文件中的视频信息
+    summary_md_path = find_summary_md(subtitle_path)
+    video_info_map = {}
+    if summary_md_path:
+        print(f"📋 读取视频信息: {summary_md_path.name}")
+        video_info_map = parse_summary_md(summary_md_path)
+        print(f"   找到 {len(video_info_map)} 个视频信息")
+    else:
+        print(f"⚠️  未找到汇总 MD 文件，将不显示视频详细信息")
+
     # 查找所有 SRT 文件
     srt_files = list(subtitle_path.glob("*.srt"))
     if not srt_files:
@@ -592,23 +722,23 @@ def process_subtitles(subtitle_dir: str, model: str = 'flash-lite',
     results_lock = threading.Lock()
     all_results = []
 
-    # 处理结果的回调
-    def callback(future):
-        result = future.result()
-        with results_lock:
-            all_results.append(result)
-
     # 使用线程池并发处理
     with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="Worker") as executor:
         # 提交所有任务
         futures = []
         for i, srt_file in enumerate(srt_files, 1):
-            future = executor.submit(process_single_video, srt_file, i, len(srt_files), model, api_key)
+            future = executor.submit(process_single_video, srt_file, i, len(srt_files), model, api_key, video_info_map)
             futures.append(future)
 
         # 收集结果
         for future in futures:
-            future.result()
+            result = future.result()
+            with results_lock:
+                all_results.append(result)
+            # 每处理完一个就保存进度
+            with results_lock:
+                temp_results = list(all_results)
+            _save_progress(report_path, author_name, srt_files, temp_results, video_info_map)
 
     # 按原始顺序排序结果
     all_results.sort(key=lambda x: x['index'])
@@ -631,32 +761,7 @@ def process_subtitles(subtitle_dir: str, model: str = 'flash-lite',
         else:
             fail_count += 1
 
-    def save_progress(summaries_list: list, current_success: int, current_fail: int,
-                     current_tokens: int, current_input: int, current_output: int):
-        """保存当前进度到文件"""
-        with open(report_path, 'w', encoding='utf-8') as f:
-            f.write(f"# {author_name} 视频内容分析报告\n\n")
-            f.write(f"**生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-            f.write(f"**视频数量**: {len(srt_files)}\n\n")
-            f.write(f"**已处理**: {current_success + current_fail} / {len(srt_files)}\n\n")
-            f.write(f"**成功**: {current_success} | **失败**: {current_fail}\n\n")
-            f.write(f"**Token**: 输入 {current_input:,} | 输出 {current_output:,} | 总计 {current_tokens:,}\n\n")
-            f.write("---\n\n")
-            f.write("## 各视频摘要（按处理顺序）\n\n")
-
-            for item in summaries_list:
-                f.write(f"### {item['title']}\n\n")
-                f.write(f"{item['summary']}\n\n")
-                f.write(f"*来源文件: {item['file']}*\n\n")
-
-            if current_fail > 0:
-                f.write("---\n\n")
-                f.write("## 失败列表\n\n")
-                for item in summaries_list:
-                    if item.get('failed'):
-                        f.write(f"- **{item['title']}**: {item.get('error', '未知错误')}\n")
-
-<arg_value>    # 生成最终汇总报告
+    # 生成最终汇总报告
     print("\n" + "=" * 60)
     print(f"📝 生成最终汇总报告...")
 
@@ -687,7 +792,20 @@ def process_subtitles(subtitle_dir: str, model: str = 'flash-lite',
         f.write("## 附录: 各视频摘要\n\n")
 
         for item in summaries:
-            f.write(f"### {item['title']}\n\n")
+            # 添加视频信息头部
+            title = item['title']
+            video_info = None
+            if video_info_map:
+                # 尝试匹配视频信息
+                for info_title, info in video_info_map.items():
+                    if title in info_title or info_title in title:
+                        video_info = info
+                        break
+
+            if video_info:
+                f.write(format_video_info_header(video_info, item['file']))
+
+            f.write(f"### {title}\n\n")
             f.write(f"{item['summary']}\n\n")
             f.write(f"*来源文件: {item['file']}*\n\n")
 
@@ -706,6 +824,52 @@ def process_subtitles(subtitle_dir: str, model: str = 'flash-lite',
     print(f"  总计 Tokens: {total_tokens:,}")
 
     return success_count, fail_count, report_path
+
+
+def _save_progress(report_path: Path, author_name: str, srt_files: list, results: list, video_info_map: dict = None):
+    """保存当前进度到文件"""
+    with open(report_path, 'w', encoding='utf-8') as f:
+        f.write(f"# {author_name} 视频内容分析报告\n\n")
+        f.write(f"**生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+        f.write(f"**视频数量**: {len(srt_files)}\n\n")
+
+        # 统计当前进度
+        current_success = sum(1 for r in results if r.get('success'))
+        current_fail = sum(1 for r in results if not r.get('success'))
+        current_tokens = sum(r.get('tokens', 0) for r in results if r.get('success'))
+        current_input = sum(r.get('input_tokens', 0) for r in results if r.get('success'))
+        current_output = sum(r.get('output_tokens', 0) for r in results if r.get('success'))
+
+        f.write(f"**已处理**: {len(results)} / {len(srt_files)}\n\n")
+        f.write(f"**成功**: {current_success} | **失败**: {current_fail}\n\n")
+        f.write(f"**Token**: 输入 {current_input:,} | 输出 {current_output:,} | 总计 {current_tokens:,}\n\n")
+        f.write("---\n\n")
+        f.write("## 各视频摘要（按处理顺序）\n\n")
+
+        for item in results:
+            # 添加视频信息头部
+            title = item['title']
+            video_info = None
+            if video_info_map:
+                # 尝试匹配视频信息
+                for info_title, info in video_info_map.items():
+                    if title in info_title or info_title in title:
+                        video_info = info
+                        break
+
+            if video_info:
+                f.write(format_video_info_header(video_info, item['file']))
+
+            f.write(f"### {title}\n\n")
+            f.write(f"{item['summary']}\n\n")
+            f.write(f"*来源文件: {item['file']}*\n\n")
+
+        if current_fail > 0:
+            f.write("---\n\n")
+            f.write("## 失败列表\n\n")
+            for item in results:
+                if item.get('failed'):
+                    f.write(f"- **{item['title']}**: {item.get('error', '未知错误')}\n")
 
 
 # ==================== 主程序 ====================
