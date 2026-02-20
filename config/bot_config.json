@@ -1,5 +1,6 @@
 {
   "bot_token": "8514628240:AAHYRGBhQvCuNkFq7g-ZmexehOoflTM3KSQ",
   "allowed_users": [],
-  "proxy_url": "http://127.0.0.1:7890"
+  "proxy_url": null,
+  "gemini_api_key": "AIzaSyDH_QflfbjgGguAFLB5GWq6L4E-kfdC6HI"
 }
