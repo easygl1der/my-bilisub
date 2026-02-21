@@ -463,8 +463,7 @@ def download_videos(csv_file: str, output_dir: str) -> tuple:
     """
     try:
         import sys
-        # 从 platforms/youtube/ 需要 ../utils 来导入
-        sys.path.insert(0, str(Path(__file__).parent.parent.parent / "utils"))
+        sys.path.insert(0, str(Path(__file__).parent))
 
         from download_videos_from_csv import parse_csv, batch_download, get_author_name_from_csv
 
@@ -504,8 +503,7 @@ def transcribe_videos(
     """
     try:
         import sys
-        # 从 platforms/youtube/ 需要 ../analysis 来导入
-        sys.path.insert(0, str(Path(__file__).parent.parent.parent / "analysis"))
+        sys.path.insert(0, str(Path(__file__).parent))
 
         from video_understand_gemini import (
             VideoProcessor, get_prompt, batch_analyze, load_completed_videos

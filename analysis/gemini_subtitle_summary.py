@@ -253,6 +253,52 @@ def find_summary_md(subtitle_dir: Path) -> Optional[Path]:
     return None
 
 
+def parse_existing_report_results(report_path: Path) -> List[Dict]:
+    """从现有报告中解析已有的结果（用于追加模式）"""
+    results = []
+    if not report_path.exists():
+        return results
+
+    try:
+        with open(report_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        # 简单解析：提取 ### 标题和后面的内容
+        lines = content.split('\n')
+        current_title = None
+        current_content = []
+
+        for line in lines:
+            if line.strip().startswith('### ') and not line.strip().startswith('### 📹'):
+                # 保存上一个
+                if current_title:
+                    results.append({
+                        'title': current_title,
+                        'summary': '\n'.join(current_content).strip(),
+                        'file': f'{current_title}.srt',
+                        'success': True
+                    })
+                # 开始新的
+                current_title = line.strip()[4:].strip()
+                current_content = []
+            elif current_title:
+                current_content.append(line)
+
+        # 保存最后一个
+        if current_title:
+            results.append({
+                'title': current_title,
+                'summary': '\n'.join(current_content).strip(),
+                'file': f'{current_title}.srt',
+                'success': True
+            })
+
+    except Exception as e:
+        print(f"⚠️ 解析现有报告失败: {e}")
+
+    return results
+
+
 def format_video_info_header(video_info: Dict, srt_filename: str) -> str:
     """
     格式化视频基本信息头部
@@ -660,8 +706,30 @@ def process_single_video(srt_file: Path, index: int, total: int, model: str, api
         }
 
 
+def load_existing_results(report_path: Path) -> set:
+    """从现有报告中加载已处理的视频标题"""
+    processed_titles = set()
+    if not report_path.exists():
+        return processed_titles
+
+    try:
+        with open(report_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+            # 查找所有 ### 标题（视频标题）
+            for line in content.split('\n'):
+                line = line.strip()
+                if line.startswith('### ') and not line.startswith('### 📹'):
+                    title = line[4:].strip()
+                    processed_titles.add(title)
+    except Exception as e:
+        print(f"⚠️ 读取现有报告失败: {e}")
+
+    return processed_titles
+
+
 def process_subtitles(subtitle_dir: str, model: str = 'flash-lite',
-                      custom_prompt: str = None, max_workers: int = 3) -> tuple:
+                      custom_prompt: str = None, max_workers: int = 3,
+                      incremental: bool = False, append: bool = False) -> tuple:
     """
     处理字幕文件夹，生成摘要和汇总报告（支持并发）
 
@@ -670,6 +738,8 @@ def process_subtitles(subtitle_dir: str, model: str = 'flash-lite',
         model: Gemini 模型
         custom_prompt: 自定义汇总提示词
         max_workers: 最大并发数（默认3）
+        incremental: 增量模式，跳过已处理的视频
+        append: 追加模式，保留已有结果
 
     Returns:
         (成功数量, 失败数量, 汇总报告路径)
@@ -696,12 +766,46 @@ def process_subtitles(subtitle_dir: str, model: str = 'flash-lite',
         print(f"⚠️  未找到汇总 MD 文件，将不显示视频详细信息")
 
     # 查找所有 SRT 文件
-    srt_files = list(subtitle_path.glob("*.srt"))
-    if not srt_files:
+    all_srt_files = list(subtitle_path.glob("*.srt"))
+    if not all_srt_files:
         print(f"❌ 未找到 SRT 文件")
         return 0, 0, None
 
-    print(f"📄 找到 {len(srt_files)} 个字幕文件")
+    # 报告文件路径
+    output_dir = subtitle_path.parent
+    report_path = output_dir / f"{author_name}_AI总结.md"
+
+    # 增量模式：跳过已处理的视频
+    srt_files = all_srt_files
+    existing_results = []
+
+    if incremental or append:
+        processed_titles = load_existing_results(report_path)
+        if processed_titles:
+            print(f"📋 已处理 {len(processed_titles)} 个视频（增量模式）")
+
+            # 过滤掉已处理的
+            new_srt_files = []
+            for srt_file in all_srt_files:
+                title = srt_file.stem
+                if title not in processed_titles:
+                    new_srt_files.append(srt_file)
+                else:
+                    print(f"   ⏭️  跳过: {title}")
+
+            srt_files = new_srt_files
+
+            if append and report_path.exists():
+                # 读取已有结果用于追加
+                existing_results = parse_existing_report_results(report_path)
+
+    if not srt_files:
+        print("ℹ️ 没有需要处理的新视频")
+        if append and existing_results:
+            print(f"   保留已有的 {len(existing_results)} 个结果")
+        return 0, 0, report_path
+
+    print(f"📄 待处理 {len(srt_files)} 个字幕文件（共 {len(all_srt_files)} 个）")
     print(f"⚡ 并发模式: {max_workers} 个线程同时处理")
     print("=" * 60)
 
@@ -713,10 +817,6 @@ def process_subtitles(subtitle_dir: str, model: str = 'flash-lite',
 
     # 开始计时
     start_time = time.time()
-
-    # 报告文件路径
-    output_dir = subtitle_path.parent
-    report_path = output_dir / f"{author_name}_AI总结.md"
 
     # 线程安全的结果存储
     results_lock = threading.Lock()
@@ -738,10 +838,13 @@ def process_subtitles(subtitle_dir: str, model: str = 'flash-lite',
             # 每处理完一个就保存进度
             with results_lock:
                 temp_results = list(all_results)
-            _save_progress(report_path, author_name, srt_files, temp_results, video_info_map)
+            _save_progress(report_path, author_name, srt_files, temp_results, video_info_map, existing_results)
 
     # 按原始顺序排序结果
     all_results.sort(key=lambda x: x['index'])
+
+    # 合并已有结果（追加模式）
+    all_summaries = existing_results + all_results
 
     # 统计结果
     summaries = []
@@ -751,9 +854,9 @@ def process_subtitles(subtitle_dir: str, model: str = 'flash-lite',
     total_input_tokens = 0
     total_output_tokens = 0
 
-    for r in all_results:
+    for r in all_summaries:
         summaries.append(r)
-        if r['success']:
+        if r.get('success'):
             success_count += 1
             total_tokens += r.get('tokens', 0)
             total_input_tokens += r.get('input_tokens', 0)
@@ -776,7 +879,7 @@ def process_subtitles(subtitle_dir: str, model: str = 'flash-lite',
     with open(report_path, 'w', encoding='utf-8') as f:
         f.write(f"# {author_name} 视频内容分析报告\n\n")
         f.write(f"**生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-        f.write(f"**视频数量**: {len(srt_files)}\n\n")
+        f.write(f"**视频数量**: {len(all_summaries)}\n\n")
         f.write(f"**成功处理**: {success_count}\n\n")
         f.write(f"**使用模型**: {summarizer.model_name}\n\n")
         f.write(f"**SDK 版本**: {'新版 google.genai' if USE_NEW_SDK else '旧版 google.generativeai'}\n\n")
@@ -815,9 +918,12 @@ def process_subtitles(subtitle_dir: str, model: str = 'flash-lite',
     total_elapsed = time.time() - start_time
     print("\n" + "=" * 60)
     print(f"📊 处理完成!")
-    print(f"  成功: {success_count} | 失败: {fail_count} | 总计: {len(srt_files)}")
+    print(f"  成功: {success_count} | 失败: {fail_count} | 总计: {len(all_summaries)}")
+    if existing_results:
+        print(f"  (已有: {len(existing_results)} | 新处理: {len(all_results)})")
     print(f"  总耗时: {total_elapsed:.2f}秒")
-    print(f"  平均每视频: {total_elapsed/len(srt_files):.2f}秒")
+    if len(all_summaries) > 0:
+        print(f"  平均每视频: {total_elapsed/len(all_summaries):.2f}秒")
     print(f"📊 Token 统计:")
     print(f"  输入 Tokens: {total_input_tokens:,}")
     print(f"  输出 Tokens: {total_output_tokens:,}")
@@ -826,27 +932,30 @@ def process_subtitles(subtitle_dir: str, model: str = 'flash-lite',
     return success_count, fail_count, report_path
 
 
-def _save_progress(report_path: Path, author_name: str, srt_files: list, results: list, video_info_map: dict = None):
+def _save_progress(report_path: Path, author_name: str, srt_files: list, results: list,
+                   video_info_map: dict = None, existing_results: list = None):
     """保存当前进度到文件"""
+    all_results = (existing_results or []) + results
+
     with open(report_path, 'w', encoding='utf-8') as f:
         f.write(f"# {author_name} 视频内容分析报告\n\n")
         f.write(f"**生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-        f.write(f"**视频数量**: {len(srt_files)}\n\n")
+        f.write(f"**视频数量**: {len(all_results)}\n\n")
 
         # 统计当前进度
-        current_success = sum(1 for r in results if r.get('success'))
-        current_fail = sum(1 for r in results if not r.get('success'))
-        current_tokens = sum(r.get('tokens', 0) for r in results if r.get('success'))
-        current_input = sum(r.get('input_tokens', 0) for r in results if r.get('success'))
-        current_output = sum(r.get('output_tokens', 0) for r in results if r.get('success'))
+        current_success = sum(1 for r in all_results if r.get('success'))
+        current_fail = sum(1 for r in all_results if not r.get('success'))
+        current_tokens = sum(r.get('tokens', 0) for r in all_results if r.get('success'))
+        current_input = sum(r.get('input_tokens', 0) for r in all_results if r.get('success'))
+        current_output = sum(r.get('output_tokens', 0) for r in all_results if r.get('success'))
 
-        f.write(f"**已处理**: {len(results)} / {len(srt_files)}\n\n")
+        f.write(f"**已处理**: {len(all_results)}\n\n")
         f.write(f"**成功**: {current_success} | **失败**: {current_fail}\n\n")
         f.write(f"**Token**: 输入 {current_input:,} | 输出 {current_output:,} | 总计 {current_tokens:,}\n\n")
         f.write("---\n\n")
         f.write("## 各视频摘要（按处理顺序）\n\n")
 
-        for item in results:
+        for item in all_results:
             # 添加视频信息头部
             title = item['title']
             video_info = None
@@ -898,11 +1007,16 @@ def main():
                         help='并发处理数（默认: 3）')
     parser.add_argument('-p', '--prompt', help='自定义汇总提示词')
     parser.add_argument('--api-key', help='Gemini API Key（覆盖配置文件）')
+    parser.add_argument('-i', '--incremental', action='store_true',
+                        help='增量模式：跳过已处理的视频')
+    parser.add_argument('-a', '--append', action='store_true',
+                        help='追加模式：保留已有结果，只处理新视频')
 
     args = parser.parse_args()
 
     # 处理字幕
-    process_subtitles(args.subtitle_dir, args.model, args.prompt, args.jobs)
+    process_subtitles(args.subtitle_dir, args.model, args.prompt, args.jobs,
+                     incremental=args.incremental, append=args.append)
 
 
 if __name__ == "__main__":

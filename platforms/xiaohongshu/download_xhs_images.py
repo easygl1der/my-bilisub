@@ -21,8 +21,46 @@ if sys.platform == 'win32':
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
 
+def extract_username_from_html(html):
+    """从 HTML 中直接搜索提取用户名（备用方法）"""
+    username = "小红书用户"
+    # 搜索常见的用户名字段 - 优先查找 user 对象内的 nickname
+    user_patterns = [
+        r'"user":\{[^}]*"nickname":"([^"]+)"',  # user 对象内的 nickname
+        r'"nickname":"([^"]+)"',  # 任何 nickname
+        r'"nickName":"([^"]+)"',
+        r'"name":"([^"]+)"',
+    ]
+    for pattern in user_patterns:
+        match = re.search(pattern, html)
+        if match:
+            try:
+                potential_name = match.group(1).encode('raw_unicode_escape').decode('unicode_escape')
+                # 过滤掉一些明显不是用户名的值
+                if potential_name and len(potential_name) > 1 and len(potential_name) < 30:
+                    # 排除一些明显不是昵称的值
+                    if potential_name not in ['分享', '推荐', '关注', '粉丝']:
+                        username = potential_name
+                        break
+            except:
+                try:
+                    potential_name = match.group(1).encode('latin1').decode('utf-8')
+                    if potential_name and len(potential_name) > 1 and len(potential_name) < 30:
+                        if potential_name not in ['分享', '推荐', '关注', '粉丝']:
+                            username = potential_name
+                            break
+                except:
+                    pass
+    return username
+
+
 def extract_xhs_images(url):
-    """从小红书链接提取笔记的实际图片URL"""
+    """
+    从小红书链接提取笔记的完整信息（用户名、标题、文案、图片URL）
+
+    Returns:
+        (用户名, 标题, 文案, 图片URL列表)
+    """
 
     # 重要的：必须使用完整的 URL（包含 xsec_token）
     headers = {
@@ -48,7 +86,7 @@ def extract_xhs_images(url):
 
     if response.status_code != 200:
         print(f"❌ 请求失败: {response.status_code}")
-        return None, []
+        return None, None, []
 
     # 检查是否被重定向到404
     if '/404?' in response.url or '你访问的页面不见了' in response.text:
@@ -57,17 +95,50 @@ def extract_xhs_images(url):
         print(f"   1. 链接缺少 xsec_token 参数")
         print(f"   2. 链接已过期或失效")
         print(f"   3. 需要登录才能查看")
-        return None, []
+        return None, None, []
 
     html = response.text
     print(f"✅ 页面获取成功 (长度: {len(html)})")
 
-    # 提取标题
-    title = "小红书图片"
+    # 提取标题 - 处理 Unicode 转义
+    title = "小红书笔记"
     title_match = re.search(r'<title[^>]*>(.+?)</title>', html)
     if title_match:
         title = title_match.group(1).replace(' - 小红书', '').strip()
+        # 处理 Unicode 转义 (如 \u0040)
+        try:
+            title = title.encode('raw_unicode_escape').decode('unicode_escape')
+        except:
+            try:
+                title = title.encode('latin1').decode('utf-8')
+            except:
+                pass
     print(f"📝 标题: {title[:50]}...")
+
+    # 提取文案/描述 - 同样处理转义
+    desc = ""
+    try:
+        # 方法1: 从 desc 字段提取
+        desc_patterns = [
+            r'"desc":"([^"]+)"',
+            r'"desc":\s*"([^"]+)"',
+        ]
+        for pattern in desc_patterns:
+            desc_match = re.search(pattern, html)
+            if desc_match:
+                try:
+                    desc = desc_match.group(1).encode('raw_unicode_escape').decode('unicode_escape')
+                except:
+                    try:
+                        desc = desc_match.group(1).encode('latin1').decode('utf-8')
+                    except:
+                        desc = desc_match.group(1)
+                if desc:
+                    break
+    except:
+        pass
+
+    print(f"📄 文案: {desc[:100] if desc else '(无)'}...")
 
     print(f"\n🔍 正在提取笔记图片...")
 
@@ -75,7 +146,10 @@ def extract_xhs_images(url):
     start_idx = html.find('window.__INITIAL_STATE__=')
     if start_idx == -1:
         print(f"❌ 未找到 __INITIAL_STATE__")
-        return title, []
+        # 从 HTML 直接提取用户名（备用方法）
+        username = extract_username_from_html(html)
+        print(f"👤 用户名: {username}")
+        return username, title, desc, []
 
     start_idx += len('window.__INITIAL_STATE__=')
     end_idx = html.find('</script>', start_idx)
@@ -88,6 +162,34 @@ def extract_xhs_images(url):
         print(f"✅ JSON解析成功")
     except json.JSONDecodeError as e:
         print(f"⚠️  JSON解析失败，使用正则搜索...")
+
+    # 提取用户名 - 参考 fetch_xhs_videos_complete.py 的 get_user_nickname 方法
+    username = "小红书用户"
+    if data:
+        # 尝试多个路径获取用户名
+        user = data.get('user', {}).get('user', {})
+        if not user or not user.get('nickname'):
+            user = data.get('user', {}).get('userPageInfo', {}).get('user', {})
+        if not user or not user.get('nickname'):
+            # 从 note.noteDetail 提取
+            note = data.get('note', {})
+            note_detail = note.get('noteDetail', {})
+            user = note_detail.get('user', {})
+
+        # 获取 nickname
+        if user and user.get('nickname'):
+            username = user.get('nickname')
+        elif user:
+            # 尝试其他字段
+            username = (user.get('name') or
+                       user.get('nickName') or
+                       user.get('username') or "小红书用户")
+
+    # 如果 JSON 没找到，从 HTML 直接搜索
+    if username == "小红书用户":
+        username = extract_username_from_html(html)
+
+    print(f"👤 用户名: {username}")
 
     image_urls = []
 
@@ -188,11 +290,22 @@ def extract_xhs_images(url):
     for i, u in enumerate(unique_urls, 1):
         print(f"   {i}. {u[:80]}...")
 
-    return title, unique_urls
+    return username, title, desc, unique_urls
 
 
 def download_images(url, output_dir="xhs_images"):
-    """下载所有图片到指定目录"""
+    """
+    下载所有图片到指定目录，同时保存文案
+
+    文件结构:
+    xhs_images/
+    └── 用户名/
+        └── 笔记标题/
+            ├── content.txt  # 文案
+            ├── image_01.jpg
+            ├── image_02.jpg
+            └── ...
+    """
 
     result = extract_xhs_images(url)
 
@@ -200,20 +313,29 @@ def download_images(url, output_dir="xhs_images"):
         print(f"\n❌ 提取失败")
         return False
 
-    title, image_urls = result
+    username, title, desc, image_urls = result
 
     if not image_urls:
         print(f"\n❌ 未找到图片")
         return False
 
-    # 创建输出目录
-    output_path = Path(output_dir)
-    output_path.mkdir(parents=True, exist_ok=True)
-
-    # 清理标题作为文件夹名
+    # 创建输出目录结构: xhs_images/用户名/笔记标题/
+    safe_user = re.sub(r'[<>:"/\\|?*]', '_', username)[:30]
     safe_title = re.sub(r'[<>:"/\\|?*]', '_', title)[:50]
 
+    note_path = Path(output_dir) / safe_user / safe_title
+    note_path.mkdir(parents=True, exist_ok=True)
+
+    # 保存文案到 content.txt
+    if desc:
+        content_file = note_path / "content.txt"
+        with open(content_file, 'w', encoding='utf-8') as f:
+            f.write(f"标题: {title}\n\n")
+            f.write(f"文案:\n{desc}\n")
+        print(f"📄 文案已保存: content.txt")
+
     print(f"\n📥 开始下载 {len(image_urls)} 张图片...")
+    print(f"📁 保存位置: {note_path}")
     print(f"{'='*60}")
 
     headers = {
@@ -240,8 +362,8 @@ def download_images(url, output_dir="xhs_images"):
                 else:
                     ext = '.jpg'
 
-                filename = f"{safe_title}_{i:02d}{ext}"
-                filepath = output_path / filename
+                filename = f"image_{i:02d}{ext}"
+                filepath = note_path / filename
 
                 with open(filepath, 'wb') as f:
                     f.write(img_response.content)
@@ -261,8 +383,9 @@ def download_images(url, output_dir="xhs_images"):
 
     print(f"{'='*60}")
     print(f"\n🎉 下载完成!")
-    print(f"   成功: {success_count} | 失败: {failed_count}")
-    print(f"   保存位置: {output_path.absolute()}")
+    print(f"   图片: {success_count} 成功 | {failed_count} 失败")
+    print(f"   文案: {'已保存' if desc else '(无)'}")
+    print(f"   位置: {note_path.absolute()}")
 
     return success_count > 0
 

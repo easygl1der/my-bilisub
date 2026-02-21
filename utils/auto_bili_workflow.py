@@ -9,16 +9,22 @@ B站用户视频自动化工作流程
 
 使用示例:
     # 基本用法 - 获取最新10个视频并完成全部流程
-    python auto_bili_workflow.py --url "https://space.bilibili.com/3546607314274766" --count 10
+    python utils/auto_bili_workflow.py --url "https://space.bilibili.com/3546607314274766" --count 10
+
+    # 增量模式 - 跳过已处理的视频
+    python utils/auto_bili_workflow.py --user "用户名" --incremental
 
     # 指定 Gemini 模型和并发数
-    python auto_bili_workflow.py --url "https://space.bilibili.com/3546607314274766" --count 20 --model flash -j 5
+    python utils/auto_bili_workflow.py --url "https://space.bilibili.com/3546607314274766" --count 20 --model flash -j 5
 
     # 从已有CSV开始，跳过视频抓取
-    python auto_bili_workflow.py --csv "MediaCrawler/bilibili_videos_output/用户名.csv" --count 20
+    python utils/auto_bili_workflow.py --csv "MediaCrawler/bilibili_videos_output/用户名.csv" --count 20
 
     # 仅抓取视频和提取字幕，不生成AI摘要
-    python auto_bili_workflow.py --url "https://space.bilibili.com/3546607314274766" --count 30 --no-summary
+    python utils/auto_bili_workflow.py --url "https://space.bilibili.com/3546607314274766" --count 30 --no-summary
+
+    # 仅生成AI摘要（已有字幕）
+    python utils/auto_bili_workflow.py --user "用户名" --summary-only
 """
 
 import argparse
@@ -37,22 +43,22 @@ if sys.platform == "win32":
 
 
 # ==================== 路径配置 ====================
-
-SCRIPT_DIR = Path(__file__).parent
+# 脚本现在在 utils/ 目录下，需要回到父目录（项目根目录）
+SCRIPT_DIR = Path(__file__).parent.parent  # 项目根目录
 MEDIA_CRAWLER_DIR = SCRIPT_DIR / "MediaCrawler"
 SUBTITLE_FETCH_SCRIPT = SCRIPT_DIR / "utils" / "batch_subtitle_fetch.py"
 SUMMARY_SCRIPT = SCRIPT_DIR / "analysis" / "gemini_subtitle_summary.py"
 
-# 输出路径
+# 输出路径 - 统一保存到 MediaCrawler 目录
 MEDIA_CRAWLER_OUTPUT = MEDIA_CRAWLER_DIR / "bilibili_videos_output"
-SUBTITLE_OUTPUT = SCRIPT_DIR / "output" / "subtitles"
+SUBTITLE_OUTPUT = MEDIA_CRAWLER_DIR / "bilibili_subtitles"
 
 
 # ==================== 步骤1: 抓取视频列表 ====================
 
 def fetch_video_list(url: str, count: int = None) -> tuple:
     """
-    步骤1: 抓取用户视频列表
+    步骤1: 抓取用户视频列表（直接调用模块，避免subprocess）
 
     Returns:
         (success: bool, user_name: str, csv_path: Path)
@@ -69,9 +75,6 @@ def fetch_video_list(url: str, count: int = None) -> tuple:
 
     print(f"🔍 用户UID: {uid}")
 
-    # 调用 MediaCrawler 的 fetch 脚本
-    # 由于该脚本使用交互式输入，我们需要创建一个临时脚本或使用 stdin
-
     fetch_script = MEDIA_CRAWLER_DIR / "fetch_bilibili_videos.py"
 
     if not fetch_script.exists():
@@ -80,46 +83,76 @@ def fetch_video_list(url: str, count: int = None) -> tuple:
 
     print(f"📡 正在抓取视频列表...")
 
-    # 使用 stdin 传递 URL
+    # 直接导入模块并调用函数（避免subprocess的开销）
     try:
-        result = subprocess.run(
-            [sys.executable, str(fetch_script)],
-            input=f"{url}\n",
-            capture_output=True,
-            text=True,
-            encoding='utf-8',
-            errors='replace',
-            timeout=600  # 10分钟超时
+        import importlib.util
+
+        # 加载模块
+        spec = importlib.util.spec_from_file_location(
+            "fetch_bilibili_videos",
+            fetch_script
         )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
 
-        # 输出结果
-        if result.stdout:
-            # 只打印关键信息
-            for line in result.stdout.split('\n'):
-                if any(keyword in line for keyword in ['✅', '❌', '⚠️', '用户名', 'CSV', '新增视频']):
-                    print(line)
+        # 调用底层函数，绕过交互式输入
+        print("  → 获取用户信息...")
+        user_info = module.get_user_info(uid)
+        if not user_info:
+            print("❌ 无法获取用户信息")
+            return False, None, None
 
-        if result.returncode != 0 and result.stderr:
-            print(f"⚠️ 抓取过程有警告: {result.stderr[:200]}")
+        user_name = user_info.get('name', f'用户{uid}')
 
-    except subprocess.TimeoutExpired:
-        print("⚠️ 视频抓取超时")
-        return False, None, None
+        print(f"  → 获取视频列表...")
+        videos = module.get_user_videos(uid)
+        if not videos:
+            print("❌ 未获取到视频")
+            return False, None, None
+
+        # 限制数量
+        if count and count < len(videos):
+            videos = videos[:count]
+            print(f"  → 限制处理数量: {count}")
+
+        # 处理视频数据
+        print(f"  → 处理 {len(videos)} 个视频...")
+        processed_videos, author_name = module.process_video_data(videos)
+
+        # 优先使用UP主名
+        if author_name:
+            user_name = author_name
+
+        # 清理用户名
+        import re
+        user_name = re.sub(r'[\/\\:*?"<>|]', '_', user_name)
+
+        # 读取历史记录
+        historical_links = module.load_historical_links(user_name)
+
+        # 过滤新视频
+        new_videos = module.filter_new_videos(processed_videos, historical_links)
+
+        # 保存结果
+        csv_out = module.save_results(new_videos, user_name, url)
+
+        print(f"✅ 抓取完成！")
+        print(f"   用户: {user_name}")
+        print(f"   新视频: {len(new_videos)} 个")
+
+        if csv_out:
+            return True, user_name, Path(csv_out)
+        else:
+            # 没有新视频，但返回现有CSV路径
+            existing_csv = MEDIA_CRAWLER_OUTPUT / f"{user_name}.csv"
+            if existing_csv.exists():
+                return True, user_name, existing_csv
+            return False, None, None
+
     except Exception as e:
         print(f"❌ 抓取失败: {e}")
-        return False, None, None
-
-    # 查找生成的CSV文件
-    csv_files = list(MEDIA_CRAWLER_OUTPUT.glob("*.csv"))
-    if csv_files:
-        # 按修改时间排序，取最新的
-        latest_csv = max(csv_files, key=lambda p: p.stat().st_mtime)
-        user_name = latest_csv.stem
-        print(f"\n📁 找到CSV: {latest_csv}")
-        print(f"👤 用户名: {user_name}")
-        return True, user_name, latest_csv
-    else:
-        print("❌ 未找到生成的CSV文件")
+        import traceback
+        traceback.print_exc()
         return False, None, None
 
 
@@ -174,7 +207,7 @@ async def fetch_subtitles(csv_path: Path, count: int = None) -> bool:
 
 # ==================== 步骤3: 生成AI摘要 ====================
 
-def generate_summary(user_name: str, model: str = 'flash-lite', jobs: int = 3) -> bool:
+def generate_summary(user_name: str, model: str = 'flash-lite', jobs: int = 3, incremental: bool = False, append: bool = False) -> bool:
     """
     步骤3: 生成AI摘要报告 (调用 analysis/gemini_subtitle_summary.py)
     """
@@ -198,6 +231,8 @@ def generate_summary(user_name: str, model: str = 'flash-lite', jobs: int = 3) -
     print(f"📄 SRT文件数: {len(srt_files)}")
     print(f"🤖 模型: {model}")
     print(f"⚡ 并发数: {jobs}")
+    if incremental:
+        print(f"🔄 增量模式: 跳过已处理视频")
 
     if not SUMMARY_SCRIPT.exists():
         print(f"❌ 找不到脚本: {SUMMARY_SCRIPT}")
@@ -216,7 +251,8 @@ def generate_summary(user_name: str, model: str = 'flash-lite', jobs: int = 3) -
         spec.loader.exec_module(module)
 
         # 调用处理函数
-        module.process_subtitles(str(subtitle_dir), model=model, max_workers=jobs)
+        module.process_subtitles(str(subtitle_dir), model=model, max_workers=jobs,
+                                 incremental=incremental, append=append)
 
         print("\n✅ AI摘要生成完成!")
         return True
@@ -252,19 +288,25 @@ def main():
         epilog="""
 使用示例:
   # 基本用法 - 获取最新10个视频
-  python auto_bili_workflow.py --url "https://space.bilibili.com/3546607314274766" --count 10
+  python utils/auto_bili_workflow.py --url "https://space.bilibili.com/3546607314274766" --count 10
+
+  # 增量模式 - 跳过已处理的视频
+  python utils/auto_bili_workflow.py --user "用户名" --incremental
 
   # 指定 Gemini 模型和并发数
-  python auto_bili_workflow.py --url "https://space.bilibili.com/3546607314274766" --count 20 --model flash -j 5
+  python utils/auto_bili_workflow.py --url "https://space.bilibili.com/3546607314274766" --count 20 --model flash -j 5
 
   # 从已有CSV开始，跳过视频抓取
-  python auto_bili_workflow.py --csv "MediaCrawler/bilibili_videos_output/用户名.csv" --count 20
+  python utils/auto_bili_workflow.py --csv "MediaCrawler/bilibili_videos_output/用户名.csv" --count 20
 
   # 仅抓取视频和提取字幕，不生成AI摘要
-  python auto_bili_workflow.py --url "https://space.bilibili.com/3546607314274766" --count 30 --no-summary
+  python utils/auto_bili_workflow.py --url "https://space.bilibili.com/3546607314274766" --count 30 --no-summary
 
   # 仅生成AI摘要（已有字幕）
-  python auto_bili_workflow.py --user "赛雷话金" --summary-only
+  python utils/auto_bili_workflow.py --user "用户名" --summary-only
+
+  # 追加模式 - 将新结果追加到现有摘要
+  python utils/auto_bili_workflow.py --user "用户名" --append --incremental
         """
     )
 
@@ -281,6 +323,10 @@ def main():
                         help="跳过AI摘要生成步骤")
     parser.add_argument("--summary-only", action="store_true",
                         help="仅生成AI摘要（跳过步骤1和2）")
+    parser.add_argument("--incremental", "-i", action="store_true",
+                        help="增量模式：跳过已处理的视频")
+    parser.add_argument("--append", "-a", action="store_true",
+                        help="追加模式：将新结果追加到现有摘要文件")
 
     args = parser.parse_args()
 
@@ -334,7 +380,8 @@ def main():
     # ==================== 步骤3: 生成AI摘要 ====================
     if not args.no_summary or args.summary_only:
         if user_name:
-            success = generate_summary(user_name, args.model, args.jobs)
+            success = generate_summary(user_name, args.model, args.jobs,
+                                       incremental=args.incremental, append=args.append)
 
             if success:
                 print("\n" + "=" * 70)
