@@ -120,9 +120,8 @@ class XHSAccountAnalyzer:
     def analyze_from_mc_data(self, data_dir: str = None) -> Dict:
         """分析 MediaCrawler 爬取的数据"""
         if data_dir is None:
-            # 默认路径从 platforms/xiaohongshu/ 回到父目录
+            # 从 platforms/xiaohongshu/ 回到父目录的 MediaCrawler/data/xhs
             data_dir = str(Path(__file__).parent.parent.parent / "MediaCrawler" / "data" / "xhs")
-        """分析 MediaCrawler 爬取的数据"""
         data_path = Path(data_dir)
 
         if not data_path.exists():
@@ -506,7 +505,7 @@ def main():
 
     parser.add_argument('--analyze-data', action='store_true',
                        help='分析 MediaCrawler 爬取的数据')
-    parser.add_argument('--data-dir', default=None,
+    parser.add_argument('--data-dir', default='MediaCrawler/data/xhs',
                        help='MediaCrawler 数据目录')
 
     parser.add_argument('--add-user', metavar='USER_ID',

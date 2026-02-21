@@ -39,7 +39,9 @@ if sys.platform == 'win32':
 
 # ==================== 配置 ====================
 WHISPER_MODEL = "small"  # tiny/base/small/medium/large
-OUTPUT_DIR = "output/transcripts"
+# 路径需要相对于项目根目录（脚本在 utils/ 下）
+PROJECT_ROOT = Path(__file__).parent.parent
+OUTPUT_DIR = str(PROJECT_ROOT / "output" / "transcripts")
 VIDEO_EXTENSIONS = {'.mp4', '.mkv', '.avi', '.mov', '.flv', '.wmv', '.webm', '.m4v'}
 # ==============================================
 
@@ -191,7 +193,7 @@ def process_video(video_path: Path, model: str, output_base_dir: Path, base_dir:
         print(f"{'='*70}")
 
         # 提取音频
-        audio_dir = Path("output/audio")
+        audio_dir = PROJECT_ROOT / "output" / "audio"
         audio_path = extract_audio(video_path, audio_dir)
 
         # Whisper 转录

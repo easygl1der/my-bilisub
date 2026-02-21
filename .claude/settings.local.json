@@ -36,7 +36,11 @@
       "Bash(E:\\\\Anaconda\\\\python.exe:*)",
       "Bash(npx @z_ai/coding-helper)",
       "Bash(pip show:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(pip cache info:*)",
+      "Bash(conda list:*)",
+      "Bash(conda run:*)",
+      "Bash(conda env list:*)"
     ]
   }
 }
