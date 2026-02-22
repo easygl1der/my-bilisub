@@ -317,7 +317,8 @@ class VideoNoteProcessor:
             return None
 
     def process_with_gemini(self, video_path: Path, title: str,
-                           mode: str = 'knowledge', model: str = 'flash-lite') -> bool:
+                           mode: str = 'knowledge', model: str = 'flash-lite',
+                           url: str = None, likes: int = 0, comments: int = 0) -> bool:
         """
         使用 Gemini 分析视频
 
@@ -326,6 +327,9 @@ class VideoNoteProcessor:
             title: 笔记标题
             mode: 分析模式
             model: Gemini 模型
+            url: 原始链接
+            likes: 点赞数
+            comments: 评论数
 
         Returns:
             是否成功
@@ -344,6 +348,22 @@ class VideoNoteProcessor:
             return False
 
         print(f"   └─ 🤖 Gemini 分析中...")
+
+        # 获取视频时长
+        try:
+            import subprocess
+            result = subprocess.run(
+                ['ffprobe', '-v', 'error', '-show_entries', 'format=duration',
+                 '-of', 'default=noprint_wrappers=1:nokey=1', str(video_path)],
+                capture_output=True, text=True, timeout=10
+            )
+            duration_sec = float(result.stdout.strip()) if result.stdout.strip() else 0
+            duration_str = f"{int(duration_sec // 60)}:{int(duration_sec % 60):02d}" if duration_sec else "未知"
+        except:
+            duration_sec = 0
+            duration_str = "未知"
+
+        start_time = time.time()
 
         try:
             genai.configure(api_key=self.api_key)
@@ -372,14 +392,34 @@ class VideoNoteProcessor:
             print(f"   └─ 🔄 分析中...")
             response = gen_model.generate_content([video_file, prompt])
 
+            # 提取 token 使用信息
+            token_info = {
+                'prompt_tokens': 0,
+                'candidates_tokens': 0,
+                'total_tokens': 0
+            }
+            if hasattr(response, 'usage_metadata') and response.usage_metadata:
+                token_info['prompt_tokens'] = response.usage_metadata.prompt_token_count or 0
+                token_info['candidates_tokens'] = response.usage_metadata.candidates_token_count or 0
+                token_info['total_tokens'] = response.usage_metadata.total_token_count or 0
+
             # 删除上传的文件
             genai.delete_file(video_file.name)
 
+            elapsed = time.time() - start_time
+
             # 保存结果
             output_file = video_path.parent / "analysis.md"
-            self._save_result(output_file, title, response.text, mode, model_name)
+            self._save_result(
+                output_file, title, response.text, mode, model_name,
+                url=url, likes=likes, comments=comments,
+                duration=duration_str, duration_sec=duration_sec,
+                elapsed=elapsed, token_info=token_info
+            )
 
-            print(f"   └─ ✅ 分析完成")
+            print(f"   └─ ✅ 分析完成 ({elapsed:.1f}秒)")
+            if token_info['total_tokens'] > 0:
+                print(f"   └─ 📊 Token: {token_info['total_tokens']:,}")
             return True
 
         except Exception as e:
@@ -476,17 +516,46 @@ class VideoNoteProcessor:
 4. 任何值得注意的细节"""
 
     def _save_result(self, output_file: Path, title: str, result: str,
-                     mode: str, model: str):
+                     mode: str, model: str, url: str = None, likes: int = 0,
+                     comments: int = 0, duration: str = "", duration_sec: float = 0,
+                     elapsed: float = 0, token_info: dict = None):
         """保存分析结果"""
         with open(output_file, 'w', encoding='utf-8') as f:
             f.write(f"# {title} - Gemini 视频分析\n\n")
-            f.write(f"## 📌 元信息\n\n")
+
+            # 视频信息表格
+            f.write(f"## 📹 视频信息\n\n")
             f.write(f"| 项目 | 内容 |\n")
             f.write(f"|------|------|\n")
             f.write(f"| **笔记标题** | {title} |\n")
+            if url:
+                f.write(f"| **原始链接** | [{url}]({url}) |\n")
+            f.write(f"| **视频时长** | {duration} |\n")
+            if likes > 0:
+                f.write(f"| **点赞数** | {likes:,} |\n")
+            if comments > 0:
+                f.write(f"| **评论数** | {comments:,} |\n")
+
+            # 分析信息
+            f.write(f"\n## 📊 分析信息\n\n")
+            f.write(f"| 项目 | 内容 |\n")
+            f.write(f"|------|------|\n")
             f.write(f"| **分析时间** | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} |\n")
             f.write(f"| **使用模型** | {model} |\n")
             f.write(f"| **分析模式** | {mode} |\n")
+            f.write(f"| **处理耗时** | {elapsed:.1f}秒 |\n")
+            if duration_sec > 0:
+                f.write(f"| **实时比率** | {duration_sec/elapsed:.1f}x |\n")
+
+            # Token 使用
+            if token_info and token_info.get('total_tokens', 0) > 0:
+                f.write(f"\n## 💰 Token 使用\n\n")
+                f.write(f"| 项目 | 数量 |\n")
+                f.write(f"|------|------|\n")
+                f.write(f"| **输入 Token** | {token_info.get('prompt_tokens', 0):,} |\n")
+                f.write(f"| **输出 Token** | {token_info.get('candidates_tokens', 0):,} |\n")
+                f.write(f"| **总计 Token** | {token_info.get('total_tokens', 0):,} |\n")
+
             f.write(f"\n---\n\n")
             f.write(f"## 🤖 AI 分析结果\n\n")
             f.write(result)
@@ -708,7 +777,7 @@ class ImageNoteProcessor:
 def process_note(url: str, output_dir: str = DEFAULT_OUTPUT_DIR,
                 generate_srt: bool = True, analysis_mode: str = 'knowledge',
                 gemini_model: str = 'flash-lite', whisper_model: str = 'base',
-                known_type: str = None) -> Dict:
+                known_type: str = None, likes: int = 0, comments: int = 0) -> Dict:
     """
     处理单个小红书笔记
 
@@ -719,6 +788,9 @@ def process_note(url: str, output_dir: str = DEFAULT_OUTPUT_DIR,
         analysis_mode: Gemini 分析模式
         gemini_model: Gemini 模型
         whisper_model: Whisper 模型
+        known_type: 已知的笔记类型
+        likes: 点赞数
+        comments: 评论数
 
     Returns:
         处理结果字典
@@ -769,7 +841,7 @@ def process_note(url: str, output_dir: str = DEFAULT_OUTPUT_DIR,
             return result
 
         # Gemini 分析
-        if not video_processor.process_with_gemini(video_path, title, analysis_mode, gemini_model):
+        if not video_processor.process_with_gemini(video_path, title, analysis_mode, gemini_model, url, likes, comments):
             result['error'] = "Gemini 分析失败"
             return result
 
@@ -800,8 +872,9 @@ def process_note(url: str, output_dir: str = DEFAULT_OUTPUT_DIR,
 
 
 def process_csv(csv_path: str, output_dir: str = DEFAULT_OUTPUT_DIR,
-               generate_srt: bool = True, analysis_mode: str = 'knowledge',
-               gemini_model: str = 'flash-lite', whisper_model: str = 'base') -> List[Dict]:
+                generate_srt: bool = True, analysis_mode: str = 'knowledge',
+                gemini_model: str = 'flash-lite', whisper_model: str = 'base',
+                limit: int = None) -> List[Dict]:
     """
     批量处理 CSV 文件
 
@@ -812,6 +885,7 @@ def process_csv(csv_path: str, output_dir: str = DEFAULT_OUTPUT_DIR,
         analysis_mode: Gemini 分析模式
         gemini_model: Gemini 模型
         whisper_model: Whisper 模型
+        limit: 限制处理数量
 
     Returns:
         处理结果列表
@@ -828,10 +902,20 @@ def process_csv(csv_path: str, output_dir: str = DEFAULT_OUTPUT_DIR,
         for row in reader:
             url = row.get('链接', '') or row.get('url', '')
             if url:
+                # 解析点赞数和评论数
+                try:
+                    likes = int(row.get('点赞数', 0) or row.get('likes', 0) or 0)
+                    comments = int(row.get('评论数', 0) or row.get('comments', 0) or 0)
+                except (ValueError, TypeError):
+                    likes = 0
+                    comments = 0
+
                 notes.append({
                     'url': url,
                     'title': row.get('标题', '') or row.get('title', ''),
-                    'type': row.get('类型', '') or row.get('type', '')
+                    'type': row.get('类型', '') or row.get('type', ''),
+                    'likes': likes,
+                    'comments': comments
                 })
 
     if not notes:
@@ -839,6 +923,11 @@ def process_csv(csv_path: str, output_dir: str = DEFAULT_OUTPUT_DIR,
         return []
 
     print(f"\n📋 找到 {len(notes)} 个笔记")
+
+    # 限制处理数量
+    if limit and limit < len(notes):
+        notes = notes[:limit]
+        print(f"⚠️  限制处理数量: {limit}")
 
     # 处理每个笔记
     results = []
@@ -851,7 +940,9 @@ def process_csv(csv_path: str, output_dir: str = DEFAULT_OUTPUT_DIR,
             analysis_mode,
             gemini_model,
             whisper_model,
-            note.get('type')  # 传递 CSV 中的类型
+            note.get('type'),  # 传递 CSV 中的类型
+            note.get('likes', 0),  # 传递点赞数
+            note.get('comments', 0)  # 传递评论数
         )
         results.append(result)
 
@@ -920,6 +1011,7 @@ def main():
                        default='flash-lite', help='Gemini 模型')
     parser.add_argument('--whisper-model', choices=['tiny', 'base', 'small', 'medium', 'large'],
                        default='base', help='Whisper 模型')
+    parser.add_argument('--limit', type=int, help='限制处理数量（用于测试）')
 
     args = parser.parse_args()
 
@@ -954,7 +1046,8 @@ def main():
             not args.no_srt,
             args.analysis_mode,
             args.gemini_model,
-            args.whisper_model
+            args.whisper_model,
+            args.limit
         )
 
 

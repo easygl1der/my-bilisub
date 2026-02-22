@@ -40,5 +40,7 @@ python-telegram-bot>=21.0
 
 # 可选: OCR功能 (需要额外安装)
 # paddleocr>=2.7.0
-# opencv-python>=4.8.0
 # paddlepaddle>=2.6.0
+
+# 视频学习笔记生成器
+opencv-python>=4.8.0
