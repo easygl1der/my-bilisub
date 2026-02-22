@@ -157,19 +157,17 @@ class LinkAnalyzer:
         type_name = type_text.get(result['type'], '未知类型')
 
         lines = [
-            f"{emoji} **识别结果**",
+            f"{emoji} 识别结果",
             f"",
-            f"🔗 **平台**: {result['platform'].upper()}",
-            f"📋 **类型**: {type_name}",
+            f"平台: {result['platform'].upper()}",
+            f"类型: {type_name}",
         ]
 
         if result['id']:
-            lines.append(f"🆔 **ID**: `{result['id']}`")
+            lines.append(f"ID: {result['id']}")
 
-        # 显示链接前50个字符
-        url_preview = result['original_url'][:50] + '...' if len(result['original_url']) > 50 else result['original_url']
         lines.append(f"")
-        lines.append(f"🔗 [查看链接]({result['original_url']})")
+        lines.append(f"链接: {result['original_url']}")
 
         return "\n".join(lines)
 
@@ -180,52 +178,52 @@ analyzer = LinkAnalyzer()
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """开始命令"""
-    welcome_msg = """👋 你好！我是**链接识别 Bot**
+    welcome_msg = """👋 你好！我是链接识别 Bot
 
 我可以识别以下平台的链接：
 
-📺 **B站**
+📺 B站
 • 视频链接 (BV号)
 • 用户主页
 
-📕 **小红书**
+📕 小红书
 • 笔记链接
 • 用户主页
 
-▶️ **YouTube**
+▶️ YouTube
 • 视频链接
 • 频道主页
 
-🔗 **使用方法**
+🔗 使用方法
 直接发送链接给我，我会自动识别并返回信息！
 
 ---
 /test_bot.py - 简单测试版本"""
 
-    await update.message.reply_text(welcome_msg, parse_mode='Markdown', disable_web_page_preview=True)
+    await update.message.reply_text(welcome_msg, disable_web_page_preview=True)
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """帮助命令"""
-    help_msg = """📖 **帮助**
+    help_msg = """📖 帮助
 
-**支持的链接格式**
+支持的链接格式：
 
-**B站**:
-• 视频: `bilibili.com/video/BV...`
-• 用户: `space.bilibili.com/123456`
+B站:
+• 视频: bilibili.com/video/BV...
+• 用户: space.bilibili.com/123456
 
-**小红书**:
-• 笔记: `xiaohongshu.com/explore/...`
-• 用户: `xiaohongshu.com/user/profile/...`
+小红书:
+• 笔记: xiaohongshu.com/explore/...
+• 用户: xiaohongshu.com/user/profile/...
 
-**YouTube**:
-• 视频: `youtube.com/watch?v=...` 或 `youtu.be/...`
-• 频道: `youtube.com/@username`
+YouTube:
+• 视频: youtube.com/watch?v=... 或 youtu.be/...
+• 频道: youtube.com/@username
 
 直接发送链接即可！"""
 
-    await update.message.reply_text(help_msg, parse_mode='Markdown', disable_web_page_preview=True)
+    await update.message.reply_text(help_msg, disable_web_page_preview=True)
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -259,17 +257,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if result['platform'] == 'unknown':
         await update.message.reply_text(
             f"❌ 无法识别此链接\n\n"
-            f"链接: `{url[:50]}...`\n\n"
-            f"目前支持的平台：B站、小红书、YouTube",
-            parse_mode='Markdown'
+            f"链接: {url[:50]}...\n\n"
+            f"目前支持的平台：B站、小红书、YouTube"
         )
     else:
         response = analyzer.format_result(result)
-        await update.message.reply_text(
-            response,
-            parse_mode='Markdown',
-            disable_web_page_preview=True
-        )
+        await update.message.reply_text(response, disable_web_page_preview=True)
 
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
