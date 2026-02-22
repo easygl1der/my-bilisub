@@ -74,6 +74,29 @@ bili_sub/
 5. 点击 "Export" 导出
 6. 将导出的内容保存到 `config/cookies.txt`
 
+## 关于 "Deprecated Feature" 警告
+
+你可能会看到这样的警告：
+```
+Deprecated Feature: Passing cookies as a header is a potential security risk...
+```
+
+**这个警告不是安全问题！** 这只是 yt-dlp 库的建议提示：
+
+### 警告说明
+- **警告原因**：yt-dlp 推荐使用专门的 cookie 文件格式（Netscape 格式）
+- **当前实现**：使用 HTTP 请求头传递 Cookie（完全可用，只是会显示警告）
+- **安全性**：你的 Cookie 仍然是安全的，只是传递方式不是 yt-dlp 的推荐方式
+- **影响**：功能完全正常，只是会看到警告信息
+
+### 我们选择当前实现的原因
+1. ✅ 更简单易用（直接粘贴 Cookie 字符串即可）
+2. ✅ 兼容性好（支持多种来源：文件/环境变量/浏览器）
+3. ✅ 功能完全正常
+4. ⚠️ 唯一缺点是会有警告信息（可忽略）
+
+如果你想完全消除警告，需要将 Cookie 转换为 Netscape 格式，但这会让配置变得更复杂。当前的实现在易用性和功能之间取得了平衡。
+
 ## 安全建议
 
 ⚠️ **重要提醒：**

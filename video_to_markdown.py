@@ -877,15 +877,271 @@ def build_markdown(title: str, video_path: Path, keyframes: List[Dict],
 
 # ==================== 主流程 ====================
 
+def calculate_optimal_keyframe_count(video_path: Path, user_override: int = None) -> int:
+    """
+    根据视频字幕信息量动态计算最优关键帧数量
+
+    Args:
+        video_path: 视频文件路径
+        user_override: 用户指定的数量（如果提供，则直接使用）
+
+    Returns:
+        计算得到的关键帧数量
+    """
+    # 如果用户明确指定，直接使用
+    if user_override is not None:
+        return user_override
+
+    # 尝试从字幕分析信息量
+    subtitle_info = analyze_subtitle_information_density(video_path)
+
+    if subtitle_info:
+        # 基于字幕信息量计算
+        density_score = subtitle_info['density_score']
+        topic_count = subtitle_info['topic_count']
+
+        # 基础数量：根据话题数量（每个主要话题至少1帧）
+        base_count = max(4, topic_count)
+
+        # 密度调整：信息密度越高，关键帧越多
+        if density_score > 0.8:  # 高密度
+            multiplier = 1.5
+            reason = f"高信息密度（{density_score:.2f}，{topic_count}个话题）"
+        elif density_score > 0.6:  # 中高密度
+            multiplier = 1.2
+            reason = f"中高信息密度（{density_score:.2f}，{topic_count}个话题）"
+        elif density_score > 0.4:  # 中等密度
+            multiplier = 1.0
+            reason = f"中等信息密度（{density_score:.2f}，{topic_count}个话题）"
+        else:  # 低密度
+            multiplier = 0.8
+            reason = f"低信息密度（{density_score:.2f}，{topic_count}个话题）"
+
+        count = int(base_count * multiplier)
+        count = max(3, min(25, count))  # 限制在 3-25 之间
+
+        print(f"   └─ 📊 字幕分析: {reason}，建议 {count} 个关键帧")
+        return count
+
+    # 回退方案：基于视频时长
+    try:
+        result = subprocess.run(
+            ['ffprobe', '-v', 'error', '-show_entries', 'format=duration',
+             '-of', 'default=noprint_wrappers=1:nokey=1', str(video_path)],
+            capture_output=True, text=True, timeout=10
+        )
+        duration = float(result.stdout.strip()) if result.stdout.strip() else 0
+    except:
+        duration = 0
+
+    if duration <= 0:
+        return 6  # 默认值
+
+    # 简化的时长策略（作为回退）
+    if duration < 60:
+        count = 4
+        reason = "短视频（无字幕）"
+    elif duration < 300:
+        count = 6
+        reason = "中等时长（无字幕）"
+    elif duration < 900:
+        count = 10
+        reason = "较长视频（无字幕）"
+    else:
+        count = 15
+        reason = "长视频（无字幕）"
+
+    print(f"   └─ 📏 时长估算: {duration:.0f}秒，{reason}，建议 {count} 个关键帧")
+    return count
+
+
+def analyze_subtitle_information_density(video_path: Path) -> Optional[Dict]:
+    """
+    分析视频字幕的信息密度
+
+    Returns:
+        {
+            'density_score': float,  # 0-1 之间的信息密度分数
+            'topic_count': int,      # 估计的话题数量
+            'word_count': int,       # 总字数
+            'has_subtitle': bool     # 是否有字幕
+        }
+        或 None（无法获取字幕）
+    """
+    import yt_dlp
+    import re
+
+    try:
+        # 尝试从视频文件名或元数据获取URL
+        # 如果是本地文件，尝试从文件名推测BV号
+        bvid_match = re.search(r'BV[\w]+', str(video_path))
+        url = None
+
+        if bvid_match:
+            bvid = bvid_match.group(0)
+            url = f"https://www.bilibili.com/video/{bvid}"
+
+        if not url:
+            return None
+
+        # 获取字幕
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'skip_download': True,
+            'writesubtitles': True,
+            'writeautomaticsub': True,
+            'subtitleslangs': ['zh-Hans', 'zh-Hant', 'zh'],
+            'subtitlesformat': 'srt',
+        }
+
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+
+            # 检查是否有字幕
+            subtitles = info.get('subtitles', {})
+            automatic_captions = info.get('automatic_captions', {})
+
+            if not subtitles and not automatic_captions:
+                return None
+
+            # 优先使用人工字幕
+            sub_data = None
+            if subtitles:
+                for lang in ['zh-Hans', 'zh-Hant', 'zh']:
+                    if lang in subtitles:
+                        sub_data = subtitles[lang]
+                        break
+            elif automatic_captions:
+                for lang in ['zh-Hans', 'zh-Hant', 'zh']:
+                    if lang in automatic_captions:
+                        sub_data = automatic_captions[lang]
+                        break
+
+            if not sub_data or not sub_data.get('url'):
+                return None
+
+            # 下载字幕内容
+            import requests
+            response = requests.get(sub_data['url'], timeout=10)
+            subtitle_text = response.text
+
+            # 分析字幕内容
+            return analyze_subtitle_content(subtitle_text)
+
+    except Exception as e:
+        # 静默失败，返回 None
+        return None
+
+
+def analyze_subtitle_content(srt_content: str) -> Dict:
+    """
+    分析 SRT 字幕内容的信息密度
+
+    Args:
+        srt_content: SRT 格式的字幕内容
+
+    Returns:
+        信息密度分析结果
+    """
+    # 提取纯文本（去掉时间码和序号）
+    lines = srt_content.split('\n')
+    text_lines = []
+
+    for line in lines:
+        line = line.strip()
+        # 跳过序号行和时间码行
+        if not line or line.isdigit() or '-->' in line:
+            continue
+        # 跳过常见的字幕格式标记
+        if line.startswith('\\') or line.startswith('[', ) or line.startswith('('):
+            continue
+        text_lines.append(line)
+
+    full_text = ' '.join(text_lines)
+
+    # 基础统计
+    char_count = len(full_text)
+    word_count = len(full_text.split())
+
+    if word_count < 10:
+        return {
+            'density_score': 0.1,
+            'topic_count': 1,
+            'word_count': word_count,
+            'has_subtitle': True
+        }
+
+    # 信息密度指标
+    # 1. 关键词密度（技术术语、专业词汇等）
+    tech_keywords = [
+        '算法', '模型', '数据', 'AI', '人工智能', '机器学习', '深度学习',
+        '框架', '架构', '原理', '技术', '方法', '实现', '应用',
+        '代码', '编程', '开发', '系统', '设计', '优化',
+        '神经', '网络', '训练', '推理', '参数', '层',
+        'Transformer', 'Attention', 'BERT', 'GPT', 'LLM',
+        '视频', '图像', '音频', '处理', '识别', '检测',
+        'API', '接口', '函数', '类', '对象', '变量'
+    ]
+
+    keyword_hits = sum(1 for kw in tech_keywords if kw in full_text)
+    keyword_density = keyword_hits / max(1, word_count / 50)  # 每50字的期望关键词数
+
+    # 2. 句子复杂度（平均句长）
+    sentences = re.split(r'[。！？!?]', full_text)
+    sentences = [s.strip() for s in sentences if s.strip()]
+    avg_sentence_length = sum(len(s.split()) for s in sentences) / max(1, len(sentences))
+
+    # 3. 话题切换频率（基于段落分隔或明显的停顿）
+    # SRT 中长的时间间隔通常表示话题切换
+    time_intervals = re.findall(r'(\d{2}:\d{2}:\d{2},\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2},\d{3})', srt_content)
+
+    gap_count = 0
+    for i in range(1, len(time_intervals)):
+        prev_end = time_intervals[i-1][1]
+        curr_start = time_intervals[i][0]
+
+        # 解析时间
+        def parse_time(t):
+            h, m, s_ms = t.split(':')
+            s, ms = s_ms.split(',')
+            return int(h) * 3600 + int(m) * 60 + int(s) + int(ms) / 1000
+
+        prev_end_sec = parse_time(prev_end)
+        curr_start_sec = parse_time(curr_start)
+
+        # 间隔超过2秒认为是话题切换
+        if curr_start_sec - prev_end_sec > 2:
+            gap_count += 1
+
+    # 综合计算信息密度分数 (0-1)
+    density_score = min(1.0, (
+        keyword_density * 0.3 +           # 关键词贡献30%
+        min(1.0, avg_sentence_length / 20) * 0.3 +  # 句长贡献30%
+        min(1.0, gap_count / 10) * 0.4    # 话题切换贡献40%
+    ))
+
+    # 估计话题数量（基于间隔和字数）
+    topic_count = max(3, int(gap_count * 0.8) + int(word_count / 300))
+    topic_count = min(30, topic_count)  # 最多30个话题
+
+    return {
+        'density_score': density_score,
+        'topic_count': topic_count,
+        'word_count': word_count,
+        'has_subtitle': True
+    }
+
+
 def generate_note(source: str, output_dir: str = DEFAULT_OUTPUT_DIR,
-                  keyframe_count: int = 6, gemini_model: str = 'flash-lite',
+                  keyframe_count: int = None, gemini_model: str = 'flash-lite',
                   language: str = 'auto', use_gemini: bool = True) -> Dict:
     """生成视频学习笔记
 
     Args:
         source: 视频文件路径
         output_dir: 输出目录
-        keyframe_count: 关键帧数量
+        keyframe_count: 关键帧数量（None 则自动计算）
         gemini_model: Gemini 模型
         language: 输出语言
         use_gemini: 是否使用 Gemini 智能检测关键帧
@@ -917,9 +1173,12 @@ def generate_note(source: str, output_dir: str = DEFAULT_OUTPUT_DIR,
     assets_dir = note_dir / 'assets'
     assets_dir.mkdir(parents=True, exist_ok=True)
 
+    # 动态计算关键帧数量
+    final_count = calculate_optimal_keyframe_count(video_path, keyframe_count)
+
     # 提取关键帧并上传
     api_key_for_keyframes = get_api_key() if use_gemini else None
-    keyframes = extract_and_upload_keyframes_smart(video_path, keyframe_count, use_gemini=use_gemini, api_key=api_key_for_keyframes)
+    keyframes = extract_and_upload_keyframes_smart(video_path, final_count, use_gemini=use_gemini, api_key=api_key_for_keyframes)
 
     # 复制未上传的图片到 assets 目录
     import shutil
@@ -990,8 +1249,8 @@ def main():
     parser.add_argument('-f', '--file', help='本地视频文件路径')
     parser.add_argument('-o', '--output', default=DEFAULT_OUTPUT_DIR,
                        help=f'输出目录（默认: {DEFAULT_OUTPUT_DIR}）')
-    parser.add_argument('--keyframes', type=int, default=6,
-                       help='提取关键帧数量（默认: 6）')
+    parser.add_argument('--keyframes', type=int, default=None,
+                       help='提取关键帧数量（默认: 根据视频时长自动计算）')
     parser.add_argument('--gemini-model', choices=['flash', 'flash-lite', 'pro'],
                        default='flash-lite', help='Gemini 模型（默认: flash-lite）')
     parser.add_argument('--lang', choices=['auto', 'zh', 'en'],

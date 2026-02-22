@@ -884,13 +884,17 @@ def download_video(video_info: dict, index: int, total: int, output_dir: Path, h
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 'Referer': 'https://www.bilibili.com/',
             }
+
             # 添加 Cookie（从文件/环境变量/浏览器获取）
             bili_cookie = get_bili_cookie()
             if bili_cookie:
                 headers['Cookie'] = bili_cookie
-                print(f"   └─ 🍪 使用 Cookie（从 {'文件' if os.path.exists(BILI_COOKIE_FILE) or os.path.exists(BILI_COOKIE_FILE_ALT) else '环境变量' if os.environ.get('BILIBILI_COOKIE') else '浏览器'}）")
+                cookie_source = '文件' if os.path.exists(BILI_COOKIE_FILE) or os.path.exists(BILI_COOKIE_FILE_ALT) else '环境变量' if os.environ.get('BILIBILI_COOKIE') else '浏览器'
+                print(f"   └─ 🍪 使用 Cookie（从 {cookie_source}）")
             else:
                 print(f"   └─ ⚠️  未找到 Cookie，可能无法下载高清视频")
+
+            # 禁用 cookie 警告（使用 no_warnings 已经包含了）
             ydl_opts.update({
                 'http_headers': headers
             })

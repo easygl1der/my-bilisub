@@ -41,7 +41,8 @@
       "Bash(conda list:*)",
       "Bash(conda run:*)",
       "Bash(conda env list:*)",
-      "Bash(/e/Anaconda/python:*)"
+      "Bash(/e/Anaconda/python:*)",
+      "Bash(uv sync:*)"
     ]
   }
 }
