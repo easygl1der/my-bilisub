@@ -877,13 +877,18 @@ def build_markdown(title: str, video_path: Path, keyframes: List[Dict],
 
 # ==================== 主流程 ====================
 
-def calculate_optimal_keyframe_count(video_path: Path, user_override: int = None) -> int:
+def calculate_optimal_keyframe_count(video_path: Path, user_override: int = None,
+                                     api_key: str = None) -> int:
     """
-    根据视频字幕信息量动态计算最优关键帧数量
+    根据视频内容动态计算最优关键帧数量
+
+    优先使用 Gemini 分析视频内容来决定关键帧数量，
+    如果 Gemini 不可用，则回退到时长估算。
 
     Args:
         video_path: 视频文件路径
         user_override: 用户指定的数量（如果提供，则直接使用）
+        api_key: Gemini API Key
 
     Returns:
         计算得到的关键帧数量
@@ -892,36 +897,11 @@ def calculate_optimal_keyframe_count(video_path: Path, user_override: int = None
     if user_override is not None:
         return user_override
 
-    # 尝试从字幕分析信息量
-    subtitle_info = analyze_subtitle_information_density(video_path)
-
-    if subtitle_info:
-        # 基于字幕信息量计算
-        density_score = subtitle_info['density_score']
-        topic_count = subtitle_info['topic_count']
-
-        # 基础数量：根据话题数量（每个主要话题至少1帧）
-        base_count = max(4, topic_count)
-
-        # 密度调整：信息密度越高，关键帧越多
-        if density_score > 0.8:  # 高密度
-            multiplier = 1.5
-            reason = f"高信息密度（{density_score:.2f}，{topic_count}个话题）"
-        elif density_score > 0.6:  # 中高密度
-            multiplier = 1.2
-            reason = f"中高信息密度（{density_score:.2f}，{topic_count}个话题）"
-        elif density_score > 0.4:  # 中等密度
-            multiplier = 1.0
-            reason = f"中等信息密度（{density_score:.2f}，{topic_count}个话题）"
-        else:  # 低密度
-            multiplier = 0.8
-            reason = f"低信息密度（{density_score:.2f}，{topic_count}个话题）"
-
-        count = int(base_count * multiplier)
-        count = max(3, min(25, count))  # 限制在 3-25 之间
-
-        print(f"   └─ 📊 字幕分析: {reason}，建议 {count} 个关键帧")
-        return count
+    # 优先尝试用 Gemini 分析视频内容
+    if api_key:
+        gemini_estimate = estimate_keyframes_with_gemini(video_path, api_key)
+        if gemini_estimate:
+            return gemini_estimate
 
     # 回退方案：基于视频时长
     try:
@@ -937,22 +917,103 @@ def calculate_optimal_keyframe_count(video_path: Path, user_override: int = None
     if duration <= 0:
         return 6  # 默认值
 
-    # 简化的时长策略（作为回退）
+    # 更细粒度的时长策略（作为回退）
     if duration < 60:
         count = 4
-        reason = "短视频（无字幕）"
-    elif duration < 300:
-        count = 6
-        reason = "中等时长（无字幕）"
-    elif duration < 900:
-        count = 10
-        reason = "较长视频（无字幕）"
+        reason = "短视频"
+    elif duration < 180:
+        count = 8
+        reason = "中等视频"
+    elif duration < 600:
+        count = 12
+        reason = "较长视频"
+    elif duration < 1800:
+        count = 18
+        reason = "长视频"
     else:
-        count = 15
-        reason = "长视频（无字幕）"
+        count = min(25, int(duration / 60))  # 每分钟约1帧
+        reason = "超长视频"
 
     print(f"   └─ 📏 时长估算: {duration:.0f}秒，{reason}，建议 {count} 个关键帧")
     return count
+
+
+def estimate_keyframes_with_gemini(video_path: Path, api_key: str) -> Optional[int]:
+    """
+    使用 Gemini 快速分析视频，估计最优关键帧数量
+
+    这是一个轻量级的分析，只返回建议的数量，不需要详细的时间点。
+
+    Returns:
+        建议的关键帧数量，或 None（分析失败）
+    """
+    import google.generativeai as genai
+    import time
+
+    try:
+        # 获取视频时长
+        try:
+            result = subprocess.run(
+                ['ffprobe', '-v', 'error', '-show_entries', 'format=duration',
+                 '-of', 'default=noprint_wrappers=1:nokey=1', str(video_path)],
+                capture_output=True, text=True, timeout=10
+            )
+            duration = float(result.stdout.strip()) if result.stdout.strip() else 0
+        except:
+            duration = 0
+
+        print(f"   └─ 🤖 Gemini 分析视频内容...")
+
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel('gemini-2.5-flash-lite')
+
+        # 上传视频
+        video_file = genai.upload_file(path=str(video_path))
+
+        # 等待处理完成
+        while video_file.state.name == "PROCESSING":
+            time.sleep(2)
+            video_file = genai.get_file(video_file.name)
+
+        if video_file.state.name != "ACTIVE":
+            genai.delete_file(video_file.name)
+            return None
+
+        # 简化的提示词 - 只需要估计数量
+        prompt = f"""分析这个视频（时长: {duration:.0f}秒），回答以下问题：
+
+1. 这个视频是什么类型？（讲座/Vlog/教程/新闻/其他）
+2. 视频内容的丰富程度如何？（简单/中等/丰富）
+3. 你认为这个视频需要提取多少个关键帧才能充分展示其内容？
+
+请只返回一个数字（建议的关键帧数量，3-25之间），不要有其他说明。
+
+例如：
+- 短教程：返回 4
+- 中等长度的技术讲解：返回 8-12
+- 长讲座：返回 15-20"""
+
+        response = model.generate_content([video_file, prompt])
+        genai.delete_file(video_file.name)
+
+        # 解析响应
+        result = response.text.strip()
+
+        # 尝试提取数字
+        import re
+        numbers = re.findall(r'\d+', result)
+
+        if numbers:
+            count = int(numbers[0])
+            count = max(3, min(25, count))  # 限制在 3-25 之间
+            print(f"   └─ 📊 Gemini 建议: {count} 个关键帧")
+            return count
+
+    except Exception as e:
+        # 静默失败
+        pass
+
+    return None
 
 
 def analyze_subtitle_information_density(video_path: Path) -> Optional[Dict]:
@@ -1174,11 +1235,11 @@ def generate_note(source: str, output_dir: str = DEFAULT_OUTPUT_DIR,
     assets_dir.mkdir(parents=True, exist_ok=True)
 
     # 动态计算关键帧数量
-    final_count = calculate_optimal_keyframe_count(video_path, keyframe_count)
+    api_key = get_api_key() if use_gemini else None
+    final_count = calculate_optimal_keyframe_count(video_path, keyframe_count, api_key)
 
     # 提取关键帧并上传
-    api_key_for_keyframes = get_api_key() if use_gemini else None
-    keyframes = extract_and_upload_keyframes_smart(video_path, final_count, use_gemini=use_gemini, api_key=api_key_for_keyframes)
+    keyframes = extract_and_upload_keyframes_smart(video_path, final_count, use_gemini=use_gemini, api_key=api_key)
 
     # 复制未上传的图片到 assets 目录
     import shutil
