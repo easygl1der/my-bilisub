@@ -604,12 +604,11 @@ def extract_and_upload_keyframes_smart(video_path: Path, count: int = 6,
         except Exception as e:
             print(f"   └─ ⚠️  Gemini 检测失败: {e}，使用备选方案")
 
-    # 如果 Gemini 失败或未启用，使用备选方案
+    # 如果 Gemini 失败，直接报错退出
     if not keyframes:
         if use_gemini:
-            print(f"   └─ 🔄 使用备选方案（OpenCV 场景检测）")
-            keyframe_data = detect_scene_changes_fallback(str(video_path), count)
-            keyframes = extract_keyframes_at_timestamps(video_path, keyframe_data)
+            print(f"   └─ ❌ Gemini 检测失败，无法继续")
+            raise SystemExit("关键帧检测失败，请检查 Gemini API 配置或网络连接后重试")
         else:
             # 直接使用均匀采样
             keyframes = extract_keyframes_uniform_sample(video_path, count)
@@ -641,8 +640,8 @@ def extract_and_upload_keyframes_smart(video_path: Path, count: int = 6,
         for kf in keyframes:
             kf['uploaded'] = False
 
-    # 清理临时文件
-    shutil.rmtree(temp_dir, ignore_errors=True)
+    # 注意：不在这里清理临时文件，让调用方在完成复制后再清理
+    # 这样可以确保即使上传失败，本地文件也能被正确复制
 
     return keyframes
 
@@ -923,12 +922,16 @@ def generate_note(source: str, output_dir: str = DEFAULT_OUTPUT_DIR,
     keyframes = extract_and_upload_keyframes_smart(video_path, keyframe_count, use_gemini=use_gemini, api_key=api_key_for_keyframes)
 
     # 复制未上传的图片到 assets 目录
+    import shutil
     for kf in keyframes:
         if not kf.get('uploaded'):
-            import shutil
-            dest = assets_dir / Path(kf['local_path']).name
-            shutil.copy(kf['local_path'], dest)
-            kf['local_relative'] = f"{assets_dir.name}/{dest.name}"
+            local_path = Path(kf['local_path'])
+            if local_path.exists():
+                dest = assets_dir / local_path.name
+                shutil.copy(str(local_path), dest)
+                kf['local_relative'] = f"{assets_dir.name}/{dest.name}"
+            else:
+                print(f"⚠️  本地文件不存在，跳过: {local_path.name}")
 
     # Gemini 分析
     try:

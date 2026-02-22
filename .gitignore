@@ -28,3 +28,7 @@ downloaded_videos/
 *.mp4
 *.mp4.part
 一键下载.bat
+
+# Cookie files (sensitive)
+config/cookies.txt
+cookies_*.txt

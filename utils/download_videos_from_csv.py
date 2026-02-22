@@ -42,16 +42,15 @@ if sys.platform == 'win32':
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
 
-# ==================== B站 Cookie 配置 ====================
-# 从 fetch_bilibili_videos.py 复制的 B 站 Cookie
-BILI_COOKIE = "buvid3=ED836AB2-1A1F-83B3-C368-EC717E8514CC52442infoc; b_nut=1768880952; lang=zh-Hans; theme-tip-show=SHOWED; buvid4=E6C199FE-5C98-198C-D77F-9B183C96AC6657438-026012011-zxmN2%2Bh1P%2F0eoan1hmmTzg%3D%3D; buvid_fp=bdde8cc73192655bb657c6b1b634831a; rpdid=|(Jl|J~JlJu)0J'u~Y)))u|Rl; theme-avatar-tip-show=SHOWED; DedeUserID=352314171; DedeUserID__ckMd5=8753aa0a6f5400e0; CURRENT_QUALITY=80; bili_ticket=eyJhbGciOiJIUzI1NiIsImtpZCI6InMwMyIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzEzNTA4OTgsImlhdCI6MTc3MTA5MTYzOCwicGx0IjotMX0.7NGUxpL_Kpz6MIafuGccDUrwQ0MYWTJIdZbcWzRFbK0; bili_ticket_expires=1771350838; SESSDATA=340e7534%2C1786643702%2C8ff5f%2A22CjBmNdSHwh1cJexOwoyFWM5LODSzCLixmDSo8umHTW2VrYyVmwwZMAH0xptDSCSuoaoSVnJ1UF9Lc0pockFlLTlKMEYteUdfNFhSbUxYTDlZak1sMHd1MHlpRTJKUzg3WGpYbVpNbEFNNlZyczJuMUZObW5mOVgtWjJQZnJ0TFhHY1NnbnA1c1lRIIEC; bili_jct=00bda0ae20a58226c7ab7c0198f889e8; bmg_af_switch=1; bmg_src_def_domain=i2.hdslb.com; sid=8khlk9a0; bp_t_offset_352314171=1169997504301760512; CURRENT_FNVAL=2000; home_feed_column=4; brows"
-
-# ==================== YouTube Cookie 配置 ====================
-# YouTube 下载可能需要 cookies.txt 文件来避免 403 错误
-# 可以使用浏览器扩展 "Get cookies.txt LOCALLY" 导出 YouTube cookies
-# 保存为 cookies_youtube.txt 放在当前目录下
+# ==================== Cookie 配置 ====================
+# Cookie 文件路径（优先从文件读取，更安全）
+BILI_COOKIE_FILE = "config/cookies.txt"  # B站 Cookie 文件
+BILI_COOKIE_FILE_ALT = "cookies_bilibili.txt"  # 备用路径
 YOUTUBE_COOKIE_FILE = "cookies_youtube.txt"
 YOUTUBE_COOKIE_FILE_ALT = "youtube_cookies.txt"  # 备用文件名
+
+# 环境变量方式（推荐用于 CI/CD 或敏感环境）
+# 在环境变量中设置：BILIBILI_COOKIE="your_cookie_here"
 
 # Chrome cookies 路径（Windows）
 CHROME_COOKIE_PATHS = [
@@ -64,6 +63,112 @@ EDGE_COOKIE_PATHS = [
     os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Edge\User Data\Default\Cookies"),
     os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Edge\User Data\Default\Network\Cookies"),
 ]
+
+
+def get_bili_cookie() -> str:
+    """
+    获取 B站 Cookie，按优先级尝试：
+    1. 环境变量 BILIBILI_COOKIE
+    2. config/cookies.txt 文件
+    3. cookies_bilibili.txt 文件
+    4. 浏览器 Cookie
+
+    Returns:
+        Cookie 字符串，失败返回 None
+    """
+    # 1. 优先从环境变量读取
+    cookie = os.environ.get('BILIBILI_COOKIE', '').strip()
+    if cookie:
+        return cookie
+
+    # 2. 从配置文件读取
+    cookie_files = [
+        Path(BILI_COOKIE_FILE),
+        Path(BILI_COOKIE_FILE_ALT),
+    ]
+
+    for cookie_file in cookie_files:
+        if cookie_file.exists():
+            try:
+                with open(cookie_file, 'r', encoding='utf-8') as f:
+                    content = f.read().strip()
+                    if content:
+                        return content
+            except Exception:
+                continue
+
+    # 3. 尝试从浏览器获取
+    browser_cookie = get_browser_cookies_bilibili()
+    if browser_cookie:
+        return browser_cookie
+
+    return None
+
+
+def get_browser_cookies_bilibili() -> str:
+    """
+    尝试从浏览器获取 B站的 cookies
+
+    Returns:
+        cookies 字符串，失败返回 None
+    """
+    try:
+        import sqlite3
+        import tempfile
+        from shutil import copy2
+
+        # 查找浏览器 cookie 文件
+        cookie_paths = EDGE_COOKIE_PATHS + CHROME_COOKIE_PATHS
+        cookie_file = None
+
+        for path in cookie_paths:
+            if os.path.exists(path):
+                cookie_file = path
+                break
+
+        if not cookie_file:
+            return None
+
+        # 复制 cookie 文件（因为浏览器可能正在使用）
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.db') as tmp:
+            tmp_path = tmp.name
+
+        try:
+            copy2(cookie_file, tmp_path)
+        except Exception:
+            return None
+
+        # 读取 cookies
+        conn = sqlite3.connect(tmp_path)
+        cursor = conn.cursor()
+
+        # 查询 B站 cookies
+        cursor.execute("""
+            SELECT name, value
+            FROM cookies
+            WHERE host_key LIKE '%.bilibili.com'
+            OR host_key = '.bilibili.com'
+            OR host_key = 'bilibili.com'
+        """)
+
+        cookies = {}
+        for name, value in cursor.fetchall():
+            if name in ['SESSDATA', 'bili_jct', 'DedeUserID', 'buvid3', 'buvid4']:
+                cookies[name] = value
+
+        conn.close()
+        os.unlink(tmp_path)
+
+        # 检查关键 cookie 是否存在
+        if 'SESSDATA' not in cookies:
+            return None
+
+        # 转换为 cookie 字符串
+        cookie_str = '; '.join([f"{name}={value}" for name, value in cookies.items()])
+        return cookie_str
+
+    except Exception:
+        return None
 
 
 def get_browser_cookies_youtube() -> str:
@@ -779,9 +884,13 @@ def download_video(video_info: dict, index: int, total: int, output_dir: Path, h
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 'Referer': 'https://www.bilibili.com/',
             }
-            # 添加 Cookie
-            if BILI_COOKIE:
-                headers['Cookie'] = BILI_COOKIE
+            # 添加 Cookie（从文件/环境变量/浏览器获取）
+            bili_cookie = get_bili_cookie()
+            if bili_cookie:
+                headers['Cookie'] = bili_cookie
+                print(f"   └─ 🍪 使用 Cookie（从 {'文件' if os.path.exists(BILI_COOKIE_FILE) or os.path.exists(BILI_COOKIE_FILE_ALT) else '环境变量' if os.environ.get('BILIBILI_COOKIE') else '浏览器'}）")
+            else:
+                print(f"   └─ ⚠️  未找到 Cookie，可能无法下载高清视频")
             ydl_opts.update({
                 'http_headers': headers
             })
@@ -812,7 +921,6 @@ def download_video(video_info: dict, index: int, total: int, output_dir: Path, h
             })
 
             # 检查是否设置了代理
-            import os
             if os.environ.get('HTTP_PROXY') or os.environ.get('HTTPS_PROXY'):
                 proxy = os.environ.get('HTTPS_PROXY') or os.environ.get('HTTP_PROXY')
                 ydl_opts['proxy'] = proxy
@@ -1092,23 +1200,28 @@ def main():
         epilog="""
 使用示例:
 
-1. 下载单个CSV文件:
+1. 下载单个视频链接（推荐）:
+   python download_videos_from_csv.py -u "https://www.bilibili.com/video/BV1UPZtBiEFS"
+
+2. 下载单个CSV文件:
    python download_videos_from_csv.py -csv "MediaCrawler/xhs_videos_output/杨雨坤-Yukun.csv"
 
-2. 下载目录下所有CSV:
+3. 下载目录下所有CSV:
    python download_videos_from_csv.py -dir "MediaCrawler/xhs_videos_output"
 
-3. 只下载video类型:
+4. 只下载video类型:
    python download_videos_from_csv.py -csv "xxx.csv" --type video
 
-4. 指定输出目录:
-   python download_videos_from_csv.py -csv "xxx.csv" -o "my_videos"
+5. 指定输出目录:
+   python download_videos_from_csv.py -u "VIDEO_URL" -o "my_videos"
 
-5. 测试（只下载前3个）:
+6. 测试（只下载前3个）:
    python download_videos_from_csv.py -csv "xxx.csv" --limit 3
         """
     )
 
+    parser.add_argument('-u', '--url', help='单个视频链接（B站/小红书/YouTube）')
+    parser.add_argument('-t', '--title', help='视频标题（仅在使用-u时有效，不指定则自动获取）')
     parser.add_argument('-csv', '--csv-file', help='CSV文件路径')
     parser.add_argument('-dir', '--directory', help='CSV文件所在目录（处理所有CSV）')
     parser.add_argument('-o', '--output', default='downloaded_videos', help='输出目录（默认: downloaded_videos）')
@@ -1118,6 +1231,84 @@ def main():
 
     args = parser.parse_args()
 
+    # ============ 单个链接下载模式 ============
+    if args.url:
+        print("\n" + "=" * 80)
+        print("🎬 单个视频下载模式")
+        print("=" * 80)
+
+        url = args.url
+        platform = detect_platform(url)
+
+        print(f"   平台: {platform}")
+        print(f"   链接: {url[:60]}...")
+
+        # 获取视频标题
+        title = args.title
+        if not title:
+            try:
+                ydl_opts = {
+                    'quiet': True,
+                    'no_warnings': True,
+                    'extract_flat': True,
+                }
+                if platform == 'bilibili':
+                    headers = {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                        'Referer': 'https://www.bilibili.com/',
+                    }
+                    bili_cookie = get_bili_cookie()
+                    if bili_cookie:
+                        headers['Cookie'] = bili_cookie
+                    ydl_opts['http_headers'] = headers
+
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                    title = info.get('title', '未知标题')
+                print(f"   标题: {title[:50]}...")
+            except Exception as e:
+                title = f"视频_{url.split('/')[-1][:8]}"
+                print(f"   标题: {title} (自动获取失败)")
+
+        # 创建视频信息
+        video_info = {
+            'url': url,
+            'title': title,
+            'type': 'video',  # 默认为视频，下载时会自动检测
+        }
+
+        # 创建输出目录
+        output_dir = Path(args.output) / "single_download"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        print(f"   输出: {output_dir}")
+
+        # 确认下载
+        if not args.yes:
+            response = input("\n是否开始下载? (y/n): ").strip().lower()
+            if response != 'y':
+                print("⏭️  已取消")
+                return
+
+        # 下载视频
+        result = download_video(video_info, 1, 1, output_dir)
+
+        # 显示结果
+        print("\n" + "=" * 80)
+        if result['success']:
+            print(f"✅ 下载成功!")
+            print(f"   文件: {result['output_file']}")
+            if result.get('is_normal'):
+                print(f"   类型: 图文 ({result.get('count', 0)}张图片)")
+            else:
+                file_size = Path(result['output_file']).stat().st_size / 1024 / 1024
+                print(f"   大小: {file_size:.1f}MB")
+        else:
+            print(f"❌ 下载失败: {result.get('error', '未知错误')}")
+        print("=" * 80)
+        return
+
+    # ============ CSV批量下载模式 ============
     # 确定要处理的CSV文件
     csv_files = []
 
