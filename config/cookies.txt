@@ -29,12 +29,19 @@ xiaohongshu_full=a1=19c72083b1ezv6ml7y7pz5sn08byjrw1jluju89dr50000339161; web_se
 # Bilibili Cookie
 # --------------------------------------------
 # 关键 Cookie: SESSDATA, bili_jct, DedeUserID
+#
+# 完整 Cookie (从 cookies_bilibili.txt 导入):
+SESSDATA=31e7696a%2C1786992317%2Cc352e%2A21CjDPrq0avsMQZwzWj5rIvbp-05WL8ghi7uZK8adzgOwQhE25EyODGpjqikeo-BLh6XoSVm9WbEprU3NKaS1QYWFYQU5BR3VuazdNRGJIMWEzdzdpQ1l1T2VNZi1iRnQ0YlJUV3NiQnJDWjVuT3l5c0M3eWN4ME96My1RQUVFdWJsYzZnOERzQ3VBIIEC
+bili_jct=3b81fd57bbf65524ae980622adf5971d
+DedeUserID=352314171
+DedeUserID__ckMd5=8753aa0a6f5400e0
+sid=7oyro35x
+bili_ticket=eyJhbGciOiJIUzI1NiIsImtpZCI6InMwMyIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzE2OTg3OTksImlhdCI6MTc3MTQzOTUzOSwicGx0IjotMX0.Uws86ap-sQfzZjqbpO2TKnJSEZVItrZ8Rok1Au2OItk
+buvid3=8D07D6AA-05D8-4A6A-360C-F9732636976147821infoc
+buvid_fp=e71aa4475b690723468475dd9cc6dd21
 
-[bilibili]
-# 请填入你的 Bilibili Cookie
-SESSDATA=
-bili_jct=
-DedeUserID=
+# 完整 Cookie 字符串格式（用于某些程序）
+bilibili_full=SESSDATA=31e7696a%2C1786992317%2Cc352e%2A21CjDPrq0avsMQZwzWj5rIvbp-05WL8ghi7uZK8adzgOwQhE25EyODGpjqikeo-BLh6XoSVm9WbEprU3NKaS1QYWFYQU5BR3VuazdNRGJIMWEzdzdpQ1l1T2VNZi1iRnQ0YlJUV3NiQnJDWjVuT3l5c0M3eWN4ME96My1RQUVFdWJsYzZnOERzQ3VBIIEC; bili_jct=3b81fd57bbf65524ae980622adf5971d; DedeUserID=352314171; DedeUserID__ckMd5=8753aa0a6f5400e0; sid=7oyro35x; bili_ticket=eyJhbGciOiJIUzI1NiIsImtpZCI6InMwMyIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzE2OTg3OTksImlhdCI6MTc3MTQzOTUzOSwicGx0IjotMX0.Uws86ap-sQfzZjqbpO2TKnJSEZVItrZ8Rok1Au2OItk; buvid3=8D07D6AA-05D8-4A6A-360C-F9732636976147821infoc; buvid_fp=e71aa4475b690723468475dd9cc6dd21
 
 # ============================================
 # YouTube Cookie (如果需要)
