@@ -150,9 +150,12 @@ def extract_keyframe_timestamps_with_gemini(video_path: str, api_key: str,
         duration = 0
 
     # 构建提示词 - 让 Gemini 返回关键时间点
-    prompt = f"""你是一个专业的视频分析师，擅长识别视频中的关键时刻。
+    # 使用 format() 避免花括号转义问题
+    prompt = """你是一个专业的视频分析师，擅长识别视频中的关键时刻。
 
-请分析这个视频（时长: {duration:.0f}秒），提取约 {target_count} 个关键时刻的时间点。
+请分析这个视频（时长: {duration}秒），提取 **恰好 {target_count} 个** 关键时刻的时间点。
+
+**重要要求：必须返回恰好 {target_count} 个关键时刻，不能多也不能少！**
 
 **请根据视频类型关注不同内容：**
 
@@ -177,16 +180,20 @@ def extract_keyframe_timestamps_with_gemini(video_path: str, api_key: str,
 请严格按照以下 JSON 格式返回（只返回 JSON，不要有其他说明文字）：
 ```json
 [
-  {{"timestamp": 10.5, "description": "开场介绍，说明视频主题", "reason": "内容开始"},
-  {{"timestamp": 45.2, "description": "第一页PPT，展示核心概念框架", "reason": "重要知识点"},
+  {{"timestamp": 10.5, "description": "开场介绍，说明视频主题", "reason": "内容开始"}},
+  {{"timestamp": 45.2, "description": "第一页PPT，展示核心概念框架", "reason": "重要知识点"}},
   {{"timestamp": 120.0, "description": "切换到案例分析", "reason": "实际应用"}}
 ]
 ```
 
 **注意事项：**
-1. timestamp 单位为秒，保留一位小数
-2. 按时间顺序排列
-3. 只返回 JSON 数组，不要有任何其他说明文字"""
+1. **必须返回恰好 {target_count} 个关键时刻**
+2. timestamp 单位为秒，保留一位小数
+3. 按时间顺序排列
+4. 只返回 JSON 数组，不要有任何其他说明文字""".format(
+        duration=f"{duration:.0f}",
+        target_count=target_count
+    )
 
     print(f"   └─ 🔄 Gemini 分析中...")
     start_time = time.time()
@@ -226,7 +233,13 @@ def extract_keyframe_timestamps_with_gemini(video_path: str, api_key: str,
             if json_end > json_start:
                 json_str = result_text[json_start:json_end+1]
                 keyframes = json.loads(json_str)
-                print(f"   └─ 📊 识别到 {len(keyframes)} 个关键时刻")
+
+                # 限制数量不超过目标值
+                if len(keyframes) > target_count:
+                    print(f"   └─ 📊 识别到 {len(keyframes)} 个关键时刻，截取前 {target_count} 个")
+                    keyframes = keyframes[:target_count]
+                else:
+                    print(f"   └─ 📊 识别到 {len(keyframes)} 个关键时刻")
                 return keyframes
     except json.JSONDecodeError as e:
         print(f"   └─ ⚠️  Gemini 返回格式解析失败: {e}")
@@ -371,6 +384,68 @@ def detect_scene_changes_fallback(video_path: str, target_count: int = 6) -> Lis
     return scene_changes
 
 
+def extract_keyframes_uniform_sample(video_path: Path, count: int = 6) -> List[Dict]:
+    """
+    均匀采样提取关键帧（传统方案）
+
+    Args:
+        video_path: 视频文件路径
+        count: 目标关键帧数量
+
+    Returns:
+        关键帧列表 [{local_path, timestamp, description, reason, uploaded, url}]
+    """
+    import cv2
+
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        print("❌ 无法打开视频文件")
+        return []
+
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+
+    if fps <= 0:
+        fps = 30  # 默认帧率
+
+    interval = max(1, total_frames // count)
+    keyframes = []
+    temp_dir = Path(".temp_keyframes")
+    temp_dir.mkdir(exist_ok=True)
+
+    frame_idx = 0
+    extracted_count = 0
+
+    while cap.isOpened() and extracted_count < count:
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        if frame_idx % interval == 0 and extracted_count < count:
+            timestamp = frame_idx / fps if fps > 0 else 0
+            filename = f"keyframe_{extracted_count+1:02d}_{int(timestamp)}s.jpg"
+            local_path = temp_dir / filename
+
+            cv2.imwrite(str(local_path), frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
+
+            print(f"  [{extracted_count+1}/{count}] 均匀采样 @ {timestamp:.0f}秒")
+
+            keyframes.append({
+                'local_path': str(local_path),
+                'timestamp': timestamp,
+                'description': f'采样点 @ {timestamp:.0f}秒',
+                'reason': '均匀采样',
+                'uploaded': False,
+                'url': None
+            })
+            extracted_count += 1
+
+        frame_idx += 1
+
+    cap.release()
+    return keyframes
+
+
 # 原有的关键帧提取函数（保留为备用）
 def extract_and_upload_keyframes_uniform(video_path: Path, count: int = 6) -> List[Dict]:
     """
@@ -481,7 +556,7 @@ def extract_and_upload_keyframes_smart(video_path: Path, count: int = 6,
     Args:
         video_path: 视频文件路径
         count: 目标关键帧数量
-        use_gemini: 是否使用 Gemini 智能检测
+        use_gemini: 是否使用 Gemini 智能检测（False 则使用均匀采样）
         api_key: Gemini API Key
 
     Returns:
@@ -493,7 +568,10 @@ def extract_and_upload_keyframes_smart(video_path: Path, count: int = 6,
     import uuid
     import shutil
 
-    print(f"\n🖼️  智能提取关键帧 (目标: {count} 帧)")
+    if use_gemini:
+        print(f"\n🖼️  智能提取关键帧 (目标: {count} 帧)")
+    else:
+        print(f"\n🖼️  均匀提取关键帧 (目标: {count} 帧)")
 
     # 获取 GitHub 配置
     github_config = get_github_config()
@@ -528,9 +606,13 @@ def extract_and_upload_keyframes_smart(video_path: Path, count: int = 6,
 
     # 如果 Gemini 失败或未启用，使用备选方案
     if not keyframes:
-        print(f"   └─ 🔄 使用备选方案（OpenCV 场景检测）")
-        keyframe_data = detect_scene_changes_fallback(str(video_path), count)
-        keyframes = extract_keyframes_at_timestamps(video_path, keyframe_data)
+        if use_gemini:
+            print(f"   └─ 🔄 使用备选方案（OpenCV 场景检测）")
+            keyframe_data = detect_scene_changes_fallback(str(video_path), count)
+            keyframes = extract_keyframes_at_timestamps(video_path, keyframe_data)
+        else:
+            # 直接使用均匀采样
+            keyframes = extract_keyframes_uniform_sample(video_path, count)
 
     # 上传到 GitHub
     if github_token and github_repo and keyframes:
@@ -798,8 +880,17 @@ def build_markdown(title: str, video_path: Path, keyframes: List[Dict],
 
 def generate_note(source: str, output_dir: str = DEFAULT_OUTPUT_DIR,
                   keyframe_count: int = 6, gemini_model: str = 'flash-lite',
-                  language: str = 'auto') -> Dict:
-    """生成视频学习笔记"""
+                  language: str = 'auto', use_gemini: bool = True) -> Dict:
+    """生成视频学习笔记
+
+    Args:
+        source: 视频文件路径
+        output_dir: 输出目录
+        keyframe_count: 关键帧数量
+        gemini_model: Gemini 模型
+        language: 输出语言
+        use_gemini: 是否使用 Gemini 智能检测关键帧
+    """
     print(f"\n{'='*60}")
     print(f"🎬 视频学习笔记生成器")
     print(f"{'='*60}")
@@ -827,9 +918,9 @@ def generate_note(source: str, output_dir: str = DEFAULT_OUTPUT_DIR,
     assets_dir = note_dir / 'assets'
     assets_dir.mkdir(parents=True, exist_ok=True)
 
-    # 提取关键帧并上传（使用智能检测）
-    api_key_for_keyframes = get_api_key()
-    keyframes = extract_and_upload_keyframes_smart(video_path, keyframe_count, use_gemini=True, api_key=api_key_for_keyframes)
+    # 提取关键帧并上传
+    api_key_for_keyframes = get_api_key() if use_gemini else None
+    keyframes = extract_and_upload_keyframes_smart(video_path, keyframe_count, use_gemini=use_gemini, api_key=api_key_for_keyframes)
 
     # 复制未上传的图片到 assets 目录
     for kf in keyframes:
@@ -870,10 +961,16 @@ def generate_note(source: str, output_dir: str = DEFAULT_OUTPUT_DIR,
 
 def main():
     parser = argparse.ArgumentParser(
-        description="视频学习笔记生成器 (GitHub + jsDelivr 图床)",
+        description="视频学习笔记生成器 (GitHub + jsDelivr 图床 + Gemini 智能关键帧检测)",
         epilog="""
 使用示例:
   python video_to_markdown.py -f "video.mp4"
+  python video_to_markdown.py -f "video.mp4" --keyframes 12
+  python video_to_markdown.py -f "video.mp4" --no-gemini
+
+关键帧检测模式:
+  - Gemini 智能检测（默认）: AI 理解视频内容，精准提取关键时刻
+  - 传统均匀采样（--no-gemini）: 按固定间隔提取关键帧
 
 配置说明:
   需要在 config_api.py 中配置:
@@ -898,6 +995,8 @@ def main():
                        default='auto', help='输出语言（默认: auto）')
     parser.add_argument('--force', action='store_true',
                        help='覆盖已存在的笔记')
+    parser.add_argument('--no-gemini', action='store_true',
+                       help='禁用 Gemini 智能检测，使用传统均匀采样')
 
     args = parser.parse_args()
 
@@ -927,7 +1026,8 @@ def main():
         output_dir=args.output,
         keyframe_count=args.keyframes,
         gemini_model=args.gemini_model,
-        language=args.lang
+        language=args.lang,
+        use_gemini=not args.no_gemini
     )
 
     if result.get('success'):

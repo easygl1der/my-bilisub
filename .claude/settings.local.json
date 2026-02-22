@@ -40,7 +40,8 @@
       "Bash(pip cache info:*)",
       "Bash(conda list:*)",
       "Bash(conda run:*)",
-      "Bash(conda env list:*)"
+      "Bash(conda env list:*)",
+      "Bash(/e/Anaconda/python:*)"
     ]
   }
 }

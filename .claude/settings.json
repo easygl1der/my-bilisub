@@ -4,7 +4,8 @@
       "Bash(\"E:/Anaconda/envs/bilisub/python.exe\" bot/video_summary_bot.py)",
       "Bash(\"E:/Anaconda/envs/bilisub/python.exe\":*)",
       "Bash(E:/Anaconda/envs/bilisub/python.exe -c \":*)",
-      "Bash(E:/Anaconda/envs/bilisub/python.exe:*)"
+      "Bash(E:/Anaconda/envs/bilisub/python.exe:*)",
+      "Bash(1:*)"
     ]
   }
 }
