@@ -29,7 +29,11 @@ import argparse
 import subprocess
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
+
+# Tenacity for retry logic
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+import requests
 
 if sys.platform == 'win32':
     import io
@@ -102,14 +106,17 @@ def get_github_config() -> Dict:
 # ==================== 关键帧提取与上传 ====================
 
 def extract_keyframe_timestamps_with_gemini(video_path: str, api_key: str,
-                                             target_count: int = 8) -> List[Dict]:
+                                             min_count: int = 5, max_count: int = 20,
+                                             min_interval: int = 3) -> List[Dict]:
     """
     使用 Gemini 分析视频，智能提取关键时间点
 
     Args:
         video_path: 视频文件路径
         api_key: Gemini API Key
-        target_count: 目标关键帧数量
+        min_count: 最少关键帧数量
+        max_count: 最多关键帧数量
+        min_interval: 关键帧之间的最小间隔（秒）
 
     Returns:
         关键时间点列表 [{timestamp, description, reason}]
@@ -153,30 +160,38 @@ def extract_keyframe_timestamps_with_gemini(video_path: str, api_key: str,
     # 使用 format() 避免花括号转义问题
     prompt = """你是一个专业的视频分析师，擅长识别视频中的关键时刻。
 
-请分析这个视频（时长: {duration}秒），提取 **恰好 {target_count} 个** 关键时刻的时间点。
+请分析这个视频（时长: {duration}秒），提取有价值的关键时刻作为关键帧。
 
-**重要要求：必须返回恰好 {target_count} 个关键时刻，不能多也不能少！**
+**核心原则：**
+- 注重**内容变化**而非简单的画面切换
+- 避免提取过于相似或重复的场景
+- 确保每个关键帧都有独特的价值
+- 参考数量：{min_count}-{max_count} 个
 
-**请根据视频类型关注不同内容：**
+**什么样的时刻值得提取？**
 
-**对于讲座/PPT类型视频，请关注：**
-- PPT 页面切换的时刻
-- 新话题/章节开始的时刻
-- 展示重要图表、公式、代码示例的时刻
-- 讲师强调重点内容的时刻
+**对于讲座/PPT类型视频：**
+- 每个新话题/章节开始（不是每页PPT）
+- 展示重要图表、公式、代码示例
+- 讲师强调重点内容时
 
-**对于风景/Vlog类型视频，请关注：**
-- 场景明显变化的时刻
-- 进入新地点/环境的时刻
-- 展示特色景观的时刻
-- 人物活动明显变化的时刻
+**对于新闻/资讯/盘点类视频：**
+- 每个新话题/新产品的介绍开始
+- 展示重要的产品界面或演示画面
+- 数据图表、重要对比出现时
+- 总结或结论出现的时刻
 
-**对于采访/对话类型视频，请关注：**
-- 话题转换的时刻
-- 出现重要观点或金句的时刻
-- 情绪明显变化的时刻
-- 对话方发生明显变化的时刻
+**对于Vlog/生活记录：**
+- 场景明显切换（进入新环境）
+- 人物活动明显变化
+- 重要事件发生时刻
 
+**什么样的时刻应该跳过？**
+- 过于相似的连续场景（如多个电影片段连续出现）
+- 纯过渡画面（如淡入淡出、转场）
+- 重复出现的界面或内容
+
+**输出格式：**
 请严格按照以下 JSON 格式返回（只返回 JSON，不要有其他说明文字）：
 ```json
 [
@@ -187,12 +202,15 @@ def extract_keyframe_timestamps_with_gemini(video_path: str, api_key: str,
 ```
 
 **注意事项：**
-1. **必须返回恰好 {target_count} 个关键时刻**
-2. timestamp 单位为秒，保留一位小数
-3. 按时间顺序排列
-4. 只返回 JSON 数组，不要有任何其他说明文字""".format(
+1. timestamp 单位为秒，保留一位小数
+2. 按时间顺序排列
+3. 只返回 JSON 数组，不要有任何其他说明文字
+4. 相邻关键帧之间至少间隔 {min_interval} 秒
+5. **质量优先于数量**：宁缺毋滥，确保每个关键帧都有独特价值""".format(
         duration=f"{duration:.0f}",
-        target_count=target_count
+        min_count=min_count,
+        max_count=max_count,
+        min_interval=min_interval
     )
 
     print(f"   └─ 🔄 Gemini 分析中...")
@@ -234,18 +252,119 @@ def extract_keyframe_timestamps_with_gemini(video_path: str, api_key: str,
                 json_str = result_text[json_start:json_end+1]
                 keyframes = json.loads(json_str)
 
-                # 限制数量不超过目标值
-                if len(keyframes) > target_count:
-                    print(f"   └─ 📊 识别到 {len(keyframes)} 个关键时刻，截取前 {target_count} 个")
-                    keyframes = keyframes[:target_count]
-                else:
-                    print(f"   └─ 📊 识别到 {len(keyframes)} 个关键时刻")
+                # 显示识别到的关键帧数量（不再截断）
+                print(f"   └─ 📊 识别到 {len(keyframes)} 个关键时刻")
                 return keyframes
     except json.JSONDecodeError as e:
         print(f"   └─ ⚠️  Gemini 返回格式解析失败: {e}")
+        # 输出原始响应用于调试
+        print(f"   └─ 📋 原始响应（前500字符）:")
+        print("   " + "\n   ".join(result_text[:500].split('\n')))
 
     print(f"   └─ ⚠️  未能识别关键时刻，将使用默认方案")
     return []
+
+
+def validate_temporal_distribution(keyframes: List[Dict], duration: float) -> List[Dict]:
+    """
+    验证并补充关键帧的时间分布，确保覆盖完整视频
+
+    Args:
+        keyframes: Gemini返回的关键帧列表
+        duration: 视频总时长（秒）
+
+    Returns:
+        验证并可能补充后的关键帧列表
+    """
+    if not keyframes:
+        return keyframes
+
+    # 检查三分段覆盖率
+    third = duration / 3
+    segments = {
+        'first': [kf for kf in keyframes if kf['timestamp'] <= third],
+        'middle': [kf for kf in keyframes if third < kf['timestamp'] <= third * 2],
+        'last': [kf for kf in keyframes if kf['timestamp'] > third * 2]
+    }
+
+    coverage = {k: len(v) for k, v in segments.items()}
+    total = len(keyframes)
+    min_coverage = total * 0.15  # 每段至少15%
+
+    # 如果某段覆盖率不足，发出警告
+    for segment_name, frames in segments.items():
+        if len(frames) < min_coverage:
+            segment_cn = {'first': '开头', 'middle': '中间', 'last': '结尾'}[segment_name]
+            print(f"   ⚠️  警告: {segment_cn}段覆盖率不足 ({len(frames)}/{total:.0f}帧)")
+
+    return keyframes
+
+
+def get_video_duration(video_path: Path) -> float:
+    """
+    获取视频时长（秒）
+
+    Args:
+        video_path: 视频文件路径
+
+    Returns:
+        视频时长（秒），失败返回0
+    """
+    try:
+        result = subprocess.run(
+            ['ffprobe', '-v', 'error', '-show_entries', 'format=duration',
+             '-of', 'default=noprint_wrappers=1:nokey=1', str(video_path)],
+            capture_output=True, text=True, timeout=10
+        )
+        return float(result.stdout.strip()) if result.stdout.strip() else 0
+    except:
+        return 0
+
+
+def calculate_adaptive_keyframe_range(video_path: Path, api_key: str = None) -> Tuple[int, int, int]:
+    """
+    计算自适应的关键帧数量范围
+
+    Args:
+        video_path: 视频文件路径
+        api_key: Gemini API Key（可选，用于内容密度分析）
+
+    Returns:
+        (min_count, max_count, min_interval)
+    """
+    duration = get_video_duration(video_path)
+
+    if duration <= 0:
+        # 无法获取时长，返回保守默认值
+        return 5, 15, 3
+
+    # 基础范围计算 - 更保守的策略，避免太多帧
+    # 短视频(<3分钟): 每15-20秒一帧
+    # 中等视频(3-10分钟): 每20-40秒一帧
+    # 长视频(>10分钟): 每40-60秒一帧
+    if duration < 180:
+        min_count = max(5, int(duration / 20))
+        max_count = min(20, int(duration / 15))
+    elif duration < 600:
+        min_count = max(8, int(duration / 40))
+        max_count = min(30, int(duration / 20))
+    else:
+        min_count = max(10, int(duration / 60))
+        max_count = min(40, int(duration / 40))
+
+    # 确保 min <= max
+    if min_count > max_count:
+        min_count, max_count = max_count, min_count
+
+    # 最小间隔（确保帧之间有足够间距）
+    if max_count > 0:
+        min_interval = max(5, int(duration / max_count * 0.7))  # 至少5秒，或理论间隔的70%
+    else:
+        min_interval = 8
+
+    print(f"   └─ 📏 根据时长 {duration:.0f}秒，建议 {min_count}-{max_count} 帧，间隔至少 {min_interval}秒")
+
+    return min_count, max_count, min_interval
 
 
 def extract_keyframes_at_timestamps(video_path: str, keyframe_data: List[Dict]) -> List[Dict]:
@@ -263,6 +382,8 @@ def extract_keyframes_at_timestamps(video_path: str, keyframe_data: List[Dict]) 
 
     cap = cv2.VideoCapture(str(video_path))
     fps = cap.get(cv2.CAP_PROP_FPS)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    video_duration = total_frames / fps if fps > 0 else 0
 
     if fps <= 0:
         fps = 30  # 默认帧率
@@ -271,9 +392,16 @@ def extract_keyframes_at_timestamps(video_path: str, keyframe_data: List[Dict]) 
     temp_dir = Path(".temp_keyframes")
     temp_dir.mkdir(exist_ok=True)
 
-    print(f"\n🖼️  提取关键帧 ({len(keyframe_data)} 帧)")
+    print(f"\n🖼️  提取关键帧 ({len(keyframe_data)} 个候选)")
+    print(f"   └─ 视频实际时长: {video_duration:.1f}秒")
 
-    for i, kf in enumerate(keyframe_data):
+    # 过滤掉超出视频时长的时间戳
+    valid_keyframes = [kf for kf in keyframe_data if kf['timestamp'] <= video_duration]
+    invalid_count = len(keyframe_data) - len(valid_keyframes)
+    if invalid_count > 0:
+        print(f"   └─ ⚠️  跳过 {invalid_count} 个超出视频时长的时间戳")
+
+    for i, kf in enumerate(valid_keyframes):
         timestamp = kf['timestamp']
         description = kf.get('description', '')
         reason = kf.get('reason', '')
@@ -289,7 +417,7 @@ def extract_keyframes_at_timestamps(video_path: str, keyframe_data: List[Dict]) 
             local_path = temp_dir / filename
             cv2.imwrite(str(local_path), frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
 
-            print(f"  [{i+1}/{len(keyframe_data)}] {timestamp:.1f}s - {description[:30]}...")
+            print(f"  [{i+1}/{len(valid_keyframes)}] {timestamp:.1f}s - {description[:30]}...")
 
             keyframes.append({
                 'local_path': str(local_path),
@@ -300,7 +428,7 @@ def extract_keyframes_at_timestamps(video_path: str, keyframe_data: List[Dict]) 
                 'url': None
             })
         else:
-            print(f"  [{i+1}/{len(keyframe_data)}] ⚠️  无法提取 {timestamp:.1f}s 的帧")
+            print(f"  [{i+1}/{len(valid_keyframes)}] ⚠️  无法提取 {timestamp:.1f}s 的帧")
 
     cap.release()
     return keyframes
@@ -547,7 +675,7 @@ def extract_and_upload_keyframes_uniform(video_path: Path, count: int = 6) -> Li
     return keyframes
 
 
-def extract_and_upload_keyframes_smart(video_path: Path, count: int = 6,
+def extract_and_upload_keyframes_smart(video_path: Path, count: int = None,
                                      use_gemini: bool = True,
                                      api_key: str = None) -> List[Dict]:
     """
@@ -555,7 +683,7 @@ def extract_and_upload_keyframes_smart(video_path: Path, count: int = 6,
 
     Args:
         video_path: 视频文件路径
-        count: 目标关键帧数量
+        count: 目标关键帧数量（None 则自动计算）
         use_gemini: 是否使用 Gemini 智能检测（False 则使用均匀采样）
         api_key: Gemini API Key
 
@@ -567,6 +695,14 @@ def extract_and_upload_keyframes_smart(video_path: Path, count: int = 6,
     import base64
     import uuid
     import shutil
+
+    # 如果未指定数量，计算自适应范围
+    if count is None and api_key:
+        min_count, max_count, min_interval = calculate_adaptive_keyframe_range(video_path, api_key)
+        # 使用中间值作为目标
+        count = (min_count + max_count) // 2
+    elif count is None:
+        count = 10  # 默认值
 
     if use_gemini:
         print(f"\n🖼️  智能提取关键帧 (目标: {count} 帧)")
@@ -590,9 +726,12 @@ def extract_and_upload_keyframes_smart(video_path: Path, count: int = 6,
 
     if use_gemini and api_key:
         try:
-            # 步骤1: 使用 Gemini 识别关键时间点
+            # 计算自适应范围
+            min_count, max_count, min_interval = calculate_adaptive_keyframe_range(video_path, api_key)
+
+            # 步骤1: 使用 Gemini 识别关键时间点（传入范围而非固定值）
             keyframe_data = extract_keyframe_timestamps_with_gemini(
-                str(video_path), api_key, count
+                str(video_path), api_key, min_count, max_count, min_interval
             )
 
             if keyframe_data:
@@ -616,7 +755,7 @@ def extract_and_upload_keyframes_smart(video_path: Path, count: int = 6,
     # 上传到 GitHub
     if github_token and github_repo and keyframes:
         print(f"\n📤 上传图片到 GitHub...")
-        uploaded_count = 0
+        upload_stats = {'success': 0, 'failed': 0}
 
         timestamp_str = datetime.now().strftime('%Y%m%d_%H%M%S')
         unique_id = str(uuid.uuid4())[:8]
@@ -629,12 +768,19 @@ def extract_and_upload_keyframes_smart(video_path: Path, count: int = 6,
             if url:
                 kf['url'] = url
                 kf['uploaded'] = True
-                uploaded_count += 1
+                upload_stats['success'] += 1
                 print(f"  [{i}/{len(keyframes)}] ✅ 上传成功")
             else:
                 kf['uploaded'] = False
+                upload_stats['failed'] += 1
+                print(f"  [{i}/{len(keyframes)}] ❌ 上传失败（已达最大重试次数）")
 
-        print(f"✅ 成功上传: {uploaded_count}/{len(keyframes)}")
+        # 上传统计
+        print(f"\n📊 上传统计:")
+        print(f"  成功: {upload_stats['success']}/{len(keyframes)}")
+        print(f"  失败: {upload_stats['failed']}/{len(keyframes)}")
+        if upload_stats['success'] + upload_stats['failed'] > 0:
+            print(f"  成功率: {upload_stats['success']/(upload_stats['success']+upload_stats['failed'])*100:.1f}%")
     else:
         print(f"\n⚠️  跳过上传，使用本地图片")
         for kf in keyframes:
@@ -646,9 +792,19 @@ def extract_and_upload_keyframes_smart(video_path: Path, count: int = 6,
     return keyframes
 
 
+@retry(
+    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=1, min=2, max=60),
+    retry=retry_if_exception_type((
+        requests.exceptions.SSLError,
+        requests.exceptions.ConnectionError,
+        requests.exceptions.Timeout
+    )),
+    before_sleep=lambda retry_state: print(f"    🔄 第 {retry_state.attempt_number} 次重试...")
+)
 def upload_to_github(image_path: Path, token: str, repo: str, filename: str = None) -> Optional[str]:
     """
-    上传图片到 GitHub 并返回 jsDelivr CDN 链接
+    上传图片到 GitHub 并返回 jsDelivr CDN 链接（带重试机制）
 
     Args:
         image_path: 本地图片路径
@@ -659,7 +815,6 @@ def upload_to_github(image_path: Path, token: str, repo: str, filename: str = No
     Returns:
         jsDelivr CDN URL 或 None
     """
-    import requests
     import base64
 
     try:
@@ -691,11 +846,23 @@ def upload_to_github(image_path: Path, token: str, repo: str, filename: str = No
             return cdn_url
         else:
             print(f"    GitHub API 错误: {response.status_code}")
+            if response.status_code >= 500:
+                # 服务器错误，抛出异常触发重试
+                raise requests.exceptions.ServerError(f"Server error: {response.status_code}")
             return None
 
+    except requests.exceptions.SSLError as e:
+        print(f"    SSL 错误: {e}")
+        raise  # 触发重试
+    except requests.exceptions.ConnectionError as e:
+        print(f"    连接错误: {e}")
+        raise  # 触发重试
+    except requests.exceptions.Timeout as e:
+        print(f"    超时: {e}")
+        raise  # 触发重试
     except Exception as e:
         print(f"    上传失败: {e}")
-        return None
+        return None  # 其他错误不重试
 
 
 # ==================== Gemini 分析 ====================
@@ -820,6 +987,11 @@ def build_markdown(title: str, video_path: Path, keyframes: List[Dict],
     """生成 Markdown 笔记"""
     lines = []
 
+    # 生成视频跳转链接（支持本地播放器）
+    # 格式: [<local-video-path>]#t=<seconds>
+    video_url = str(video_path).replace('\\', '/')
+    time_link_prefix = f"[{video_url}]#t="
+
     # 标题
     lines.append(f"# {title} - 学习笔记")
     lines.append("")
@@ -833,16 +1005,24 @@ def build_markdown(title: str, video_path: Path, keyframes: List[Dict],
     lines.append("|------|------|")
     lines.append(f"| **视频文件** | {video_path.name} |")
     lines.append(f"| **生成时间** | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} |")
+    lines.append(f"| **关键帧数量** | {len(keyframes)} |")
     lines.append("")
     lines.append("---")
     lines.append("")
 
     # 关键帧
     if keyframes:
-        lines.append("## 🖼️ 关键帧")
+        lines.append("## 🖼️ 关键帧详解")
         lines.append("")
-        for kf in keyframes:
+        lines.append(f"共 {len(keyframes)} 个关键帧")
+        lines.append("")
+        lines.append("*点击时间戳可跳转到视频对应位置*")
+        lines.append("")
+
+        for i, kf in enumerate(keyframes):
             timestamp = kf.get('timestamp', 0)
+            description = kf.get('description', '')
+            reason = kf.get('reason', '')
 
             # 优先使用云端 URL
             if kf.get('uploaded') and kf.get('url'):
@@ -852,14 +1032,35 @@ def build_markdown(title: str, video_path: Path, keyframes: List[Dict],
                 filename = Path(kf['local_path']).name
                 lines.append(f"![关键帧]({assets_dir}/{filename})")
 
-            lines.append(f"*{timestamp:.0f}秒*")
+            # 时间和描述（添加跳转链接）
+            time_min = int(timestamp // 60)
+            time_sec = int(timestamp % 60)
+            lines.append(f"**🕐 [{time_min:02d}:{time_sec:02d}]({time_link_prefix}{timestamp:.0f})** - {description}")
+            lines.append("")
+
+            # 选择理由
+            if reason:
+                lines.append(f"> 💡 **选择理由**: {reason}")
+                lines.append("")
+
+            # 与下一帧之间的内容过渡
+            if i < len(keyframes) - 1:
+                next_kf = keyframes[i + 1]
+                next_timestamp = next_kf['timestamp']
+                time_gap = next_timestamp - timestamp
+                next_description = next_kf.get('description', '下一场景')
+
+                lines.append(f"📋 **接下来 {time_gap:.0f} 秒**: 从当前内容过渡到「{next_description}」")
+                lines.append("")
+
+            lines.append("---")
             lines.append("")
 
     # AI 分析
     if analysis:
         lines.append("---")
         lines.append("")
-        lines.append("## 🧠 AI 学习笔记")
+        lines.append("## 🧠 AI 深度分析")
         lines.append("")
         lines.append(analysis)
         lines.append("")
@@ -869,7 +1070,7 @@ def build_markdown(title: str, video_path: Path, keyframes: List[Dict],
     lines.append("")
     lines.append("## 📝 我的笔记")
     lines.append("")
-    lines.append("> 留白供添加个人笔记")
+    lines.append("> ✨ 在这里添加你的个人思考、疑问和总结")
     lines.append("")
 
     return "\n".join(lines)
@@ -1234,12 +1435,23 @@ def generate_note(source: str, output_dir: str = DEFAULT_OUTPUT_DIR,
     assets_dir = note_dir / 'assets'
     assets_dir.mkdir(parents=True, exist_ok=True)
 
-    # 动态计算关键帧数量
+    # 获取API密钥
     api_key = get_api_key() if use_gemini else None
-    final_count = calculate_optimal_keyframe_count(video_path, keyframe_count, api_key)
 
-    # 提取关键帧并上传
-    keyframes = extract_and_upload_keyframes_smart(video_path, final_count, use_gemini=use_gemini, api_key=api_key)
+    # 提取关键帧并上传（函数内部会自动计算自适应范围）
+    # 如果用户指定了 keyframe_count，则使用用户指定的值
+    keyframes = extract_and_upload_keyframes_smart(
+        video_path,
+        count=keyframe_count,  # 传入用户指定的值或None（自动计算）
+        use_gemini=use_gemini,
+        api_key=api_key
+    )
+
+    # 验证时间分布
+    if keyframes:
+        duration = get_video_duration(video_path)
+        if duration > 0:
+            validate_temporal_distribution(keyframes, duration)
 
     # 复制未上传的图片到 assets 目录
     import shutil

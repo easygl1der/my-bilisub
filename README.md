@@ -317,6 +317,32 @@ A:
 
 ---
 
+## 处理无字幕视频
+
+当视频没有内置字幕时，可以使用 `video_fallback_processor.py` 作为备选方案：
+
+```bash
+# 处理 CSV 中的无字幕视频
+python utils/video_fallback_processor.py --csv "bilibili_videos_output/作者名.csv"
+
+# 指定 Gemini 模型
+python utils/video_fallback_processor.py --csv "bilibili_videos_output/作者名.csv" --model flash
+
+# 限制处理数量（测试用）
+python utils/video_fallback_processor.py --csv "bilibili_videos_output/作者名.csv" --limit 3
+```
+
+**功能说明：**
+1. 自动下载视频文件
+2. 使用 Gemini 分析视频内容（理解画面和音频）
+3. 生成结构化的学习笔记（与字幕处理格式一致）
+4. 自动保存到 `MediaCrawler/bilibili_subtitles/作者名/` 目录
+
+**Gemini 模型选择：**
+- `flash-lite` - 推荐，速度快，配额最多
+- `flash` - 质量更好，配额较少
+- `pro` - 最高质量
+
 ## 可选功能：Whisper 字幕
 
 如果需要提取视频字幕，可以使用内置的 Whisper 工具：

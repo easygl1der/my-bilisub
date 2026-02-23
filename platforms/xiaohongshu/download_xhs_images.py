@@ -56,10 +56,10 @@ def extract_username_from_html(html):
 
 def extract_xhs_images(url):
     """
-    从小红书链接提取笔记的完整信息（用户名、标题、文案、图片URL）
+    从小红书链接提取笔记的完整信息（用户名、标题、文案、图片URL、笔记ID、用户ID）
 
     Returns:
-        (用户名, 标题, 文案, 图片URL列表)
+        (用户名, 标题, 文案, 图片URL列表, 笔记URL, 用户主页URL)
     """
 
     # 重要的：必须使用完整的 URL（包含 xsec_token）
@@ -86,7 +86,7 @@ def extract_xhs_images(url):
 
     if response.status_code != 200:
         print(f"❌ 请求失败: {response.status_code}")
-        return None, None, []
+        return None, None, [], '', ''
 
     # 检查是否被重定向到404
     if '/404?' in response.url or '你访问的页面不见了' in response.text:
@@ -95,9 +95,56 @@ def extract_xhs_images(url):
         print(f"   1. 链接缺少 xsec_token 参数")
         print(f"   2. 链接已过期或失效")
         print(f"   3. 需要登录才能查看")
-        return None, None, []
+        return None, None, [], '', ''
 
     html = response.text
+
+    # 提取笔记 ID 和用户 ID
+    note_url = response.url  # 使用最终重定向后的 URL
+    user_homepage = ''
+
+    # 从 URL 或 HTML 中提取信息
+    try:
+        # 尝试从 URL 中提取笔记 ID
+        # 格式: https://www.xiaohongshu.com/explore/笔记ID?...
+        url_match = re.search(r'/explore/([^/?]+)', note_url)
+        if url_match:
+            note_id = url_match.group(1)
+        else:
+            note_id = ''
+
+        # 尝试从 JSON 中提取用户 ID 来构建主页链接
+        start_idx = html.find('window.__INITIAL_STATE__=')
+        if start_idx != -1:
+            start_idx += len('window.__INITIAL_STATE__=')
+            end_idx = html.find('</script>', start_idx)
+            json_str = html[start_idx:end_idx]
+
+            try:
+                data = json.loads(json_str)
+
+                # 尝试多个路径获取用户 ID
+                user_id = None
+                user = data.get('user', {}).get('user', {})
+                if not user or not user.get('user_id'):
+                    user = data.get('user', {}).get('userPageInfo', {}).get('user', {})
+                if not user or not user.get('user_id'):
+                    note = data.get('note', {})
+                    note_detail = note.get('noteDetail', {})
+                    user = note_detail.get('user', {})
+
+                if user:
+                    user_id = (user.get('user_id') or
+                              user.get('userId') or
+                              user.get('webId'))
+
+                if user_id:
+                    user_homepage = f"https://www.xiaohongshu.com/user/profile/{user_id}"
+            except:
+                pass
+    except:
+        pass
+
     print(f"✅ 页面获取成功 (长度: {len(html)})")
 
     # 提取标题 - 处理 Unicode 转义
@@ -290,18 +337,22 @@ def extract_xhs_images(url):
     for i, u in enumerate(unique_urls, 1):
         print(f"   {i}. {u[:80]}...")
 
-    return username, title, desc, unique_urls
+    print(f"📎 笔记链接: {note_url[:80]}...")
+    if user_homepage:
+        print(f"👤 用户主页: {user_homepage}")
+
+    return username, title, desc, unique_urls, note_url, user_homepage
 
 
 def download_images(url, output_dir="xhs_images"):
     """
-    下载所有图片到指定目录，同时保存文案
+    下载所有图片到指定目录，同时保存文案和链接信息
 
     文件结构:
     xhs_images/
     └── 用户名/
         └── 笔记标题/
-            ├── content.txt  # 文案
+            ├── content.txt  # 文案（包含标题、链接、用户主页）
             ├── image_01.jpg
             ├── image_02.jpg
             └── ...
@@ -309,11 +360,11 @@ def download_images(url, output_dir="xhs_images"):
 
     result = extract_xhs_images(url)
 
-    if not result:
+    if not result or len(result) < 4:
         print(f"\n❌ 提取失败")
         return False
 
-    username, title, desc, image_urls = result
+    username, title, desc, image_urls, note_url, user_homepage = result
 
     if not image_urls:
         print(f"\n❌ 未找到图片")
@@ -326,13 +377,16 @@ def download_images(url, output_dir="xhs_images"):
     note_path = Path(output_dir) / safe_user / safe_title
     note_path.mkdir(parents=True, exist_ok=True)
 
-    # 保存文案到 content.txt
-    if desc:
-        content_file = note_path / "content.txt"
-        with open(content_file, 'w', encoding='utf-8') as f:
-            f.write(f"标题: {title}\n\n")
-            f.write(f"文案:\n{desc}\n")
-        print(f"📄 文案已保存: content.txt")
+    # 保存文案到 content.txt（包含标题、链接、用户主页）
+    content_file = note_path / "content.txt"
+    with open(content_file, 'w', encoding='utf-8') as f:
+        f.write(f"标题: {title}\n")
+        if note_url:
+            f.write(f"链接: {note_url}\n")
+        if user_homepage:
+            f.write(f"用户主页: {user_homepage}\n")
+        f.write(f"\n文案:\n{desc}\n")
+    print(f"📄 文案已保存: content.txt")
 
     print(f"\n📥 开始下载 {len(image_urls)} 张图片...")
     print(f"📁 保存位置: {note_path}")

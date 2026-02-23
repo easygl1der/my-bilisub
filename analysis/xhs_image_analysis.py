@@ -40,9 +40,11 @@ import sys
 import time
 import json
 import re
+import hashlib
+import requests
 from pathlib import Path
 from datetime import datetime
-from typing import List, Dict, Optional, Tuple, Set
+from typing import List, Dict, Optional, Tuple
 
 # Windows编码修复
 if sys.platform == 'win32':
@@ -994,10 +996,7 @@ STYLE_PROMPTS = {
 
 ---
 
-请确保输出结构完整，每个部分都要有实质内容。""",
-}
-
-# 风格自动识别提示词
+请确保输出结构完整，每个部分都要有实质内容。
 
 ## 💭 情感与共鸣
 ### 作者情绪
@@ -1902,13 +1901,263 @@ class XHSImageAnalyzer:
             except:
                 pass
 
+    def analyze_single_image(self, image_file) -> str:
+        """
+        分析单张图片，生成场景描述
+
+        Args:
+            image_file: 上传的图片文件对象
+
+        Returns:
+            图片描述文本
+        """
+        prompt = """请详细描述这张图片的内容，包括：
+
+1. **场景环境**: 图片拍摄的地点（室内/室外、具体场所）
+2. **主要元素**: 图片中的主要人物、物品或建筑
+3. **色彩与光线**: 图片的色彩风格和光线特点
+4. **氛围感受**: 图片传达的整体氛围或情感
+
+请用简洁清晰的语言描述，2-3句话即可。"""
+
+        try:
+            model = genai.GenerativeModel(self.model_name)
+            response = model.generate_content([image_file, prompt])
+            return response.text.strip()
+        except Exception as e:
+            return f"图片描述生成失败: {e}"
+
+
+# ==================== GitHub 图片上传 ====================
+
+def get_github_config() -> tuple:
+    """
+    从环境变量或配置文件获取 GitHub 配置
+
+    Returns:
+        (token, repo) 或 (None, None)
+    """
+    import os
+
+    # 从环境变量读取
+    token = os.getenv('GITHUB_TOKEN')
+    repo = os.getenv('GITHUB_REPO')
+
+    if token and repo:
+        return token, repo
+
+    # 尝试从 config_api.py 读取
+    try:
+        sys.path.insert(0, str(Path(__file__).parent.parent))
+        from config_api import API_CONFIG
+        github_config = API_CONFIG.get('github', {})
+        token = github_config.get('token')
+        repo = github_config.get('repo')
+        if token and repo:
+            return token, repo
+    except ImportError:
+        pass
+
+    # 尝试从用户主目录的配置文件读取
+    config_file = Path.home() / '.github_upload_config'
+    if config_file.exists():
+        import json
+        try:
+            with open(config_file, 'r') as f:
+                config = json.load(f)
+                return config.get('token'), config.get('repo')
+        except:
+            pass
+
+    return None, None
+
+
+def upload_to_github(image_path: Path, token: str, repo: str, filename: str = None) -> Optional[str]:
+    """
+    上传图片到 GitHub 并返回 jsDelivr CDN 链接
+
+    Args:
+        image_path: 本地图片路径
+        token: GitHub Personal Access Token
+        repo: 仓库名称 (格式: username/repo-name)
+        filename: 自定义文件名
+
+    Returns:
+        jsDelivr CDN URL 或 None
+    """
+    import base64
+    from tenacity import (
+        retry,
+        stop_after_attempt,
+        retry_if_exception_type,
+        before_sleep_log
+    )
+    import logging
+
+    try:
+        if not filename:
+            filename = image_path.name
+
+        with open(image_path, 'rb') as f:
+            content = base64.b64encode(f.read()).decode()
+
+        # 上传到 GitHub 的 assets 目录
+        url = f"https://api.github.com/repos/{repo}/contents/assets/{filename}"
+
+        response = requests.put(
+            url,
+            headers={
+                'Authorization': f'token {token}',
+                'Accept': 'application/vnd.github.v3+json'
+            },
+            json={
+                'message': f'Upload {filename}',
+                'content': content
+            },
+            timeout=30
+        )
+
+        if response.status_code in [200, 201]:
+            # 返回 jsDelivr CDN 链接
+            cdn_url = f"https://cdn.jsdelivr.net/gh/{repo}/assets/{filename}"
+            return cdn_url
+        else:
+            print(f"    GitHub API 错误: {response.status_code}")
+            if response.status_code >= 500:
+                raise requests.exceptions.ServerError(f"Server error: {response.status_code}")
+            return None
+
+    except requests.exceptions.SSLError as e:
+        print(f"    SSL 错误: {e}")
+        raise
+    except requests.exceptions.ConnectionError as e:
+        print(f"    连接错误: {e}")
+        raise
+    except requests.exceptions.Timeout as e:
+        print(f"    超时: {e}")
+        raise
+    except Exception as e:
+        print(f"    上传失败: {e}")
+        return None
+
+
+def upload_images_to_github(image_paths: List[Path], title: str,
+                            token: str = None, repo: str = None) -> List[Optional[str]]:
+    """
+    批量上传图片到 GitHub
+
+    Args:
+        image_paths: 图片路径列表
+        title: 笔记标题（用于生成文件名）
+        token: GitHub Token
+        repo: GitHub 仓库
+
+    Returns:
+        CDN URL 列表（失败则为 None）
+    """
+    if not token or not repo:
+        print(f"\n⚠️  未配置 GitHub，跳过图片上传")
+        print(f"   配置方法: 设置环境变量 GITHUB_TOKEN 和 GITHUB_REPO")
+        print(f"   或创建 ~/.github_upload_config 文件")
+        return [None] * len(image_paths)
+
+    # 生成唯一标识符
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    safe_title = re.sub(r'[<>:"/\\|?*]', '_', title)[:30]
+    unique_id = hashlib.md5(f"{safe_title}_{timestamp}".encode()).hexdigest()[:8]
+
+    print(f"\n📤 开始上传图片到 GitHub...")
+    print(f"   仓库: {repo}")
+    print(f"   数量: {len(image_paths)} 张")
+
+    cdn_urls = []
+
+    for i, img_path in enumerate(image_paths, 1):
+        # 生成唯一文件名
+        ext = img_path.suffix
+        filename = f"{timestamp}_{unique_id}_xhs_{i:03d}{ext}"
+
+        print(f"  [{i}/{len(image_paths)}] {img_path.name[:30]}... ", end='', flush=True)
+
+        try:
+            url = upload_to_github(img_path, token, repo, filename)
+            if url:
+                cdn_urls.append(url)
+                print(f"✅")
+            else:
+                cdn_urls.append(None)
+                print(f"⚠️  失败")
+        except Exception as e:
+            cdn_urls.append(None)
+            print(f"❌ {str(e)[:30]}")
+
+        time.sleep(0.5)  # 避免 API 限流
+
+    success_count = sum(1 for url in cdn_urls if url)
+    print(f"\n✅ 上传完成: {success_count}/{len(image_paths)} 成功")
+
+    return cdn_urls
+
+
+def replace_local_images_with_cdn(markdown_content: str, image_paths: List[Path],
+                                 cdn_urls: List[Optional[str]]) -> str:
+    """
+    替换 Markdown 中的本地图片路径为 CDN 链接
+
+    Args:
+        markdown_content: 原始 Markdown 内容
+        image_paths: 本地图片路径列表
+        cdn_urls: CDN URL 列表
+
+    Returns:
+        替换后的 Markdown 内容
+    """
+    if not cdn_urls or all(url is None for url in cdn_urls):
+        return markdown_content
+
+    # AI 分析中可能包含本地图片引用，我们需要替换它们
+    # AI 分析中的图片通常引用本地路径，我们需要替换为 CDN 链接
+    content = markdown_content
+
+    # 简单的替换策略：找到所有本地图片路径并替换
+    for img_path, cdn_url in zip(image_paths, cdn_urls):
+        if cdn_url:
+            # 替换绝对路径
+            content = content.replace(str(img_path.absolute()), cdn_url)
+            # 替换相对路径
+            content = content.replace(str(img_path), cdn_url)
+            # 替换文件名
+            content = content.replace(img_path.name, f"![{img_path.name}]({cdn_url})")
+
+    return content
+
 
 # ==================== 输出管理 ====================
 
 def save_result(title: str, username: str, text: str, result: str,
                 style: str, model: str, token_info: dict, image_count: int,
-                image_dir: str, output_dir: str = "xhs_analysis") -> Path:
-    """保存分析结果"""
+                image_dir: str, output_dir: str = "xhs_analysis", metadata: dict = None,
+                image_paths: List[Path] = None, upload_github: bool = False,
+                image_descriptions: List[str] = None) -> Path:
+    """
+    保存分析结果
+
+    Args:
+        title: 笔记标题
+        username: 用户名
+        text: 原始文案
+        result: AI 分析结果
+        style: 内容风格
+        model: 模型名称
+        token_info: Token 使用信息
+        image_count: 图片数量
+        image_dir: 图片目录
+        output_dir: 输出目录
+        metadata: 元数据（链接等）
+        image_paths: 图片路径列表
+        upload_github: 是否上传到 GitHub
+        image_descriptions: 每张图片的描述列表
+    """
     output_path = Path(output_dir)
 
     # 保持用户名文件夹结构
@@ -1921,6 +2170,13 @@ def save_result(title: str, username: str, text: str, result: str,
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
 
     result_file = user_output / f"{safe_title}_{timestamp}.md"
+
+    # 上传图片到 GitHub（如果启用）
+    cdn_urls = None
+    if upload_github and image_paths:
+        token, repo = get_github_config()
+        if token and repo:
+            cdn_urls = upload_images_to_github(image_paths, title, token, repo)
 
     with open(result_file, 'w', encoding='utf-8') as f:
         f.write(f"# {title}\n\n")
@@ -1935,10 +2191,43 @@ def save_result(title: str, username: str, text: str, result: str,
         f.write(f"| **图片数量** | {image_count} |\n")
         f.write(f"| **来源目录** | `{image_dir}` |\n")
 
+        # 添加链接信息（如果有）
+        if metadata:
+            if metadata.get('note_url'):
+                f.write(f"| **笔记链接** | [{metadata['note_url']}]({metadata['note_url']}) |\n")
+            if metadata.get('user_homepage'):
+                f.write(f"| **用户主页** | [{metadata['user_homepage']}]({metadata['user_homepage']}) |\n")
+
         if token_info and token_info.get('total_tokens', 0) > 0:
             f.write(f"| **Token 使用** | 输入: {token_info.get('prompt_tokens', 0):,} | 输出: {token_info.get('candidates_tokens', 0):,} | **总计: {token_info.get('total_tokens', 0):,}** |\n")
 
         f.write(f"\n---\n\n")
+
+        # 添加图片展示部分
+        if image_paths:
+            f.write(f"## 🖼️ 笔记图片\n\n")
+
+            for i, img_path in enumerate(image_paths, 1):
+                # 使用 CDN 链接或本地路径
+                if cdn_urls and i <= len(cdn_urls) and cdn_urls[i-1]:
+                    img_url = cdn_urls[i-1]
+                    f.write(f"### 图片 {i}\n\n")
+                    f.write(f"![{title} - 图片{i}]({img_url})\n\n")
+                else:
+                    # 使用相对路径
+                    try:
+                        rel_path = Path(image_dir).relative_to(Path.cwd()) / img_path.name
+                    except ValueError:
+                        rel_path = img_path
+                    f.write(f"### 图片 {i}\n\n")
+                    f.write(f"![{title} - 图片{i}]({rel_path})\n\n")
+
+                # 添加图片描述（如果有）
+                if image_descriptions and i <= len(image_descriptions) and image_descriptions[i-1]:
+                    f.write(f"**📝 场景描述**: {image_descriptions[i-1]}\n\n")
+
+            f.write(f"---\n\n")
+
         f.write(f"## 📄 原始文字内容\n\n")
         f.write(f"{text}\n\n")
         f.write(f"---\n\n")
@@ -1948,7 +2237,7 @@ def save_result(title: str, username: str, text: str, result: str,
     return result_file
 
 
-def load_text_content(image_dir: Path, text_file: str = None) -> Tuple[str, str]:
+def load_text_content(image_dir: Path, text_file: str = None) -> Tuple[str, str, dict]:
     """
     从目录加载文字内容
 
@@ -1957,7 +2246,7 @@ def load_text_content(image_dir: Path, text_file: str = None) -> Tuple[str, str]
         text_file: 指定的文字文件名
 
     Returns:
-        (用户名, 文字内容)
+        (用户名, 文字内容, 元数据字典)
     """
     # 尝试读取 content.txt
     if text_file:
@@ -1967,6 +2256,11 @@ def load_text_content(image_dir: Path, text_file: str = None) -> Tuple[str, str]
 
     username = "未知用户"
     text_content = ""
+    metadata = {
+        'note_url': '',
+        'user_homepage': '',
+        'title': ''
+    }
 
     if text_path.exists():
         with open(text_path, 'r', encoding='utf-8') as f:
@@ -1975,15 +2269,26 @@ def load_text_content(image_dir: Path, text_file: str = None) -> Tuple[str, str]
         # 尝试提取用户名（从目录名）
         username = image_dir.parent.name
 
-        # 提取纯文案内容
+        # 解析元数据
         lines = content.split('\n')
         content_lines = []
         in_content = False
+
         for line in lines:
-            if '文案:' in line or 'desc:' in line.lower():
+            # 提取标题
+            if line.startswith('标题:') or line.startswith('Title:'):
+                metadata['title'] = line.split(':', 1)[1].strip()
+            # 提取笔记链接
+            elif line.startswith('链接:') or line.startswith('URL:') or line.startswith('Link:'):
+                metadata['note_url'] = line.split(':', 1)[1].strip()
+            # 提取用户主页
+            elif line.startswith('主页:') or line.startswith('Homepage:') or line.startswith('用户主页:'):
+                metadata['user_homepage'] = line.split(':', 1)[1].strip()
+            # 提取文案内容
+            elif '文案:' in line or 'desc:' in line.lower():
                 in_content = True
                 continue
-            if in_content:
+            elif in_content:
                 content_lines.append(line)
 
         text_content = '\n'.join(content_lines).strip()
@@ -1992,7 +2297,7 @@ def load_text_content(image_dir: Path, text_file: str = None) -> Tuple[str, str]
         if not text_content:
             text_content = content
 
-    return username, text_content
+    return username, text_content, metadata
 
 
 def get_image_files(image_dir: Path) -> List[Path]:
@@ -2009,7 +2314,8 @@ def get_image_files(image_dir: Path) -> List[Path]:
 
 def process_single_note(image_dir: str, analyzer: XHSImageAnalyzer,
                         style: str = None, auto_style: bool = True,
-                        text_file: str = None, output_dir: str = "xhs_analysis") -> bool:
+                        text_file: str = None, output_dir: str = "xhs_analysis",
+                        upload_github: bool = False) -> bool:
     """
     处理单个笔记目录
 
@@ -2020,6 +2326,7 @@ def process_single_note(image_dir: str, analyzer: XHSImageAnalyzer,
         auto_style: 是否自动检测风格
         text_file: 文字文件名
         output_dir: 输出目录
+        upload_github: 是否上传图片到 GitHub
 
     Returns:
         是否成功
@@ -2049,8 +2356,8 @@ def process_single_note(image_dir: str, analyzer: XHSImageAnalyzer,
     print(f"📸 图片数量: {len(image_paths)}")
     print(f"{'='*80}")
 
-    # 加载文字内容
-    username, text_content = load_text_content(image_dir, text_file)
+    # 加载文字内容和元数据
+    username, text_content, metadata = load_text_content(image_dir, text_file)
     print(f"📄 文字内容: {len(text_content)} 字符")
 
     # 上传图片
@@ -2075,6 +2382,15 @@ def process_single_note(image_dir: str, analyzer: XHSImageAnalyzer,
             style=detected_style or 'general'
         )
 
+        # 生成每张图片的描述
+        print(f"\n📝 生成图片描述...")
+        image_descriptions = []
+        for i, uploaded_file in enumerate(uploaded_files, 1):
+            print(f"  [{i}/{len(uploaded_files)}] ", end='', flush=True)
+            description = analyzer.analyze_single_image(uploaded_file)
+            image_descriptions.append(description)
+            print(f"✅")
+
         # 删除上传的文件
         analyzer.delete_files(uploaded_files)
 
@@ -2096,7 +2412,11 @@ def process_single_note(image_dir: str, analyzer: XHSImageAnalyzer,
                 token_info=token_info,
                 image_count=len(uploaded_files),
                 image_dir=image_dir_rel,
-                output_dir=output_dir
+                output_dir=output_dir,
+                metadata=metadata,
+                image_paths=image_paths,
+                upload_github=upload_github,
+                image_descriptions=image_descriptions
             )
 
             # 尝试显示相对路径
@@ -2181,34 +2501,366 @@ def batch_process_user(user_dir: str, analyzer: XHSImageAnalyzer,
     return stats
 
 
+# ==================== 小红书笔记下载功能 ====================
+
+def extract_xhs_note_info(url: str) -> Optional[Dict]:
+    """
+    从小红书链接提取笔记信息
+
+    Args:
+        url: 小红书笔记链接（需要包含 xsec_token）
+
+    Returns:
+        包含笔记信息的字典，失败返回 None
+    """
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Referer': 'https://www.xiaohongshu.com/',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+    }
+
+    print(f"📡 正在获取笔记信息...")
+    print(f"   URL: {url[:80]}...")
+
+    try:
+        response = requests.get(url, headers=headers, timeout=30, allow_redirects=True)
+
+        if response.status_code != 200:
+            print(f"❌ 请求失败: HTTP {response.status_code}")
+            return None
+
+        # 检查是否被重定向到404
+        if '/404?' in response.url or '你访问的页面不见了' in response.text:
+            print(f"❌ 页面无法访问（可能需要登录或链接已过期）")
+            return None
+
+        html = response.text
+
+        # 提取标题
+        title = "小红书笔记"
+        title_match = re.search(r'<title[^>]*>(.+?)</title>', html)
+        if title_match:
+            title = title_match.group(1).replace(' - 小红书', '').strip()
+            try:
+                title = title.encode('raw_unicode_escape').decode('unicode_escape')
+            except:
+                try:
+                    title = title.encode('latin1').decode('utf-8')
+                except:
+                    pass
+
+        # 提取文案
+        desc = ""
+        desc_patterns = [r'"desc":"([^"]+)"', r'"desc":\s*"([^"]+)"']
+        for pattern in desc_patterns:
+            desc_match = re.search(pattern, html)
+            if desc_match:
+                try:
+                    desc = desc_match.group(1).encode('raw_unicode_escape').decode('unicode_escape')
+                except:
+                    try:
+                        desc = desc_match.group(1).encode('latin1').decode('utf-8')
+                    except:
+                        desc = desc_match.group(1)
+                if desc:
+                    break
+
+        # 提取图片 URL 和用户名
+        image_urls = []
+        username = "小红书用户"  # 默认值
+
+        # 查找 __INITIAL_STATE__
+        start_idx = html.find('window.__INITIAL_STATE__=')
+        if start_idx == -1:
+            print(f"⚠️  未找到 __INITIAL_STATE__，用户名可能不准确")
+            username = "小红书用户"
+        else:
+            start_idx += len('window.__INITIAL_STATE__=')
+            end_idx = html.find('</script>', start_idx)
+            json_str = html[start_idx:end_idx]
+
+            try:
+                data = json.loads(json_str)
+
+                # 提取用户名 - 使用多个路径尝试（与 download_xhs_images.py 相同）
+                username = "小红书用户"
+                user = data.get('user', {}).get('user', {})
+                if not user or not user.get('nickname'):
+                    user = data.get('user', {}).get('userPageInfo', {}).get('user', {})
+                if not user or not user.get('nickname'):
+                    # 从 note.noteDetail 提取
+                    note = data.get('note', {})
+                    note_detail = note.get('noteDetail', {})
+                    user = note_detail.get('user', {})
+
+                # 获取 nickname
+                if user and user.get('nickname'):
+                    username = user.get('nickname')
+                elif user:
+                    # 尝试其他字段
+                    username = (user.get('name') or
+                               user.get('nickName') or
+                               user.get('username') or "小红书用户")
+
+                # 提取图片 URL
+                note = data.get('note', {})
+                note_detail = note.get('noteDetail', {})
+                image_list = note_detail.get('imageList', [])
+
+                if image_list:
+                    for img_obj in image_list:
+                        if isinstance(img_obj, dict):
+                            url = (img_obj.get('urlDefault') or
+                                   img_obj.get('url_default') or
+                                   img_obj.get('url'))
+                            if url:
+                                image_urls.append(url)
+            except json.JSONDecodeError:
+                print(f"⚠️  JSON 解析失败，使用备用方法提取用户名和图片...")
+
+                # 备用方法：从 HTML 中直接搜索用户名
+                user_patterns = [
+                    r'"user":\{[^}]*"nickname":"([^"]+)"',  # user 对象内的 nickname
+                    r'"nickname":"([^"]+)"',  # 任何 nickname
+                    r'"nickName":"([^"]+)"',
+                    r'"name":"([^"]+)"',
+                ]
+
+                for pattern in user_patterns:
+                    match = re.search(pattern, html)
+                    if match:
+                        try:
+                            # 处理 Unicode 转义
+                            nickname = match.group(1)
+                            try:
+                                nickname = nickname.encode('raw_unicode_escape').decode('unicode_escape')
+                            except:
+                                try:
+                                    nickname = nickname.encode('latin1').decode('utf-8')
+                                except:
+                                    pass
+
+                            # 过滤一些明显不是用户名的值
+                            if nickname and len(nickname) > 1 and len(nickname) < 30:
+                                if nickname not in ['分享', '推荐', '关注', '粉丝', '笔记', '点赞']:
+                                    username = nickname
+                                    print(f"   ✅ 从 HTML 提取用户名: {username}")
+                                    break
+                        except:
+                            pass
+
+                # 备用方法：直接搜索图片 URL
+                start = json_str.find('"imageList"')
+                if start >= 0:
+                    bracket_start = json_str.find('[', start)
+                    if bracket_start >= 0:
+                        depth = 0
+                        i = bracket_start
+                        while i < len(json_str):
+                            if json_str[i] == '[':
+                                depth += 1
+                            elif json_str[i] == ']':
+                                depth -= 1
+                                if depth == 0:
+                                    bracket_end = i
+                                    break
+                            i += 1
+
+                        list_content = json_str[bracket_start+1:bracket_end]
+                        url_pattern = r'"urlDefault":"([^"]+)"'
+                        for match in re.finditer(url_pattern, list_content):
+                            url = match.group(1)
+                            if url:
+                                image_urls.append(url)
+
+        # 去重并清理 URL
+        seen = set()
+        unique_urls = []
+        for url in image_urls:
+            url = url.split('?')[0]
+            try:
+                url = url.encode('utf-8').decode('unicode_escape')
+            except:
+                pass
+            url = url.replace(r'\/', '/')
+            if url.startswith('http://'):
+                url = 'https://' + url[7:]
+            elif not url.startswith('https://'):
+                continue
+            if url not in seen and 'xhscdn' in url:
+                seen.add(url)
+                unique_urls.append(url)
+
+        # 提取用户主页链接
+        user_homepage = ''
+        if start_idx != -1:
+            try:
+                data = json.loads(json_str)
+                user = data.get('user', {}).get('user', {})
+                if not user or not user.get('user_id'):
+                    user = data.get('user', {}).get('userPageInfo', {}).get('user', {})
+                if not user or not user.get('user_id'):
+                    note = data.get('note', {})
+                    note_detail = note.get('noteDetail', {})
+                    user = note_detail.get('user', {})
+
+                if user:
+                    user_id = (user.get('user_id') or
+                              user.get('userId') or
+                              user.get('webId'))
+                    if user_id:
+                        user_homepage = f"https://www.xiaohongshu.com/user/profile/{user_id}"
+            except:
+                pass
+
+        result = {
+            'title': title,
+            'desc': desc,
+            'image_urls': unique_urls,
+            'note_url': response.url,
+            'user_homepage': user_homepage,
+            'username': username,  # 添加用户名
+        }
+
+        print(f"✅ 成功提取笔记信息")
+        print(f"   标题: {title[:50]}...")
+        print(f"   作者: {username}")
+        print(f"   图片: {len(unique_urls)} 张")
+        print(f"   链接: {response.url[:80]}...")
+
+        return result
+
+    except Exception as e:
+        print(f"❌ 提取失败: {e}")
+        return None
+
+
+def download_xhs_note(url: str, output_dir: str = "xhs_images") -> Optional[Path]:
+    """
+    下载小红书笔记的图片和文案
+
+    Args:
+        url: 小红书笔记链接
+        output_dir: 输出目录
+
+    Returns:
+        下载的笔记目录路径，失败返回 None
+    """
+    # 提取笔记信息
+    note_info = extract_xhs_note_info(url)
+
+    if not note_info:
+        return None
+
+    if not note_info['image_urls']:
+        print(f"❌ 未找到图片")
+        return None
+
+    # 使用提取的用户名
+    username = note_info.get('username', '小红书用户')
+
+    # 创建目录结构: xhs_images/用户名/笔记标题/
+    safe_user = re.sub(r'[<>:"/\\|?*]', '_', username)[:30]
+    safe_title = re.sub(r'[<>:"/\\|?*]', '_', note_info['title'])[:50]
+    note_path = Path(output_dir) / safe_user / safe_title
+    note_path.mkdir(parents=True, exist_ok=True)
+
+    # 保存 content.txt
+    content_file = note_path / "content.txt"
+    with open(content_file, 'w', encoding='utf-8') as f:
+        f.write(f"标题: {note_info['title']}\n")
+        if note_info['note_url']:
+            f.write(f"链接: {note_info['note_url']}\n")
+        if note_info['user_homepage']:
+            f.write(f"用户主页: {note_info['user_homepage']}\n")
+        f.write(f"\n文案:\n{note_info['desc']}\n")
+    print(f"📄 文案已保存")
+
+    # 下载图片
+    print(f"\n📥 开始下载 {len(note_info['image_urls'])} 张图片...")
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Referer': 'https://www.xiaohongshu.com/',
+    }
+
+    success_count = 0
+    for i, img_url in enumerate(note_info['image_urls'], 1):
+        try:
+            print(f"[{i}/{len(note_info['image_urls'])}] ", end='', flush=True)
+
+            img_response = requests.get(img_url, headers=headers, timeout=30)
+
+            if img_response.status_code == 200:
+                content_type = img_response.headers.get('Content-Type', '')
+                if 'png' in content_type or img_url.endswith('.png'):
+                    ext = '.png'
+                elif 'webp' in content_type or img_url.endswith('.webp'):
+                    ext = '.webp'
+                else:
+                    ext = '.jpg'
+
+                filename = f"image_{i:02d}{ext}"
+                filepath = note_path / filename
+
+                with open(filepath, 'wb') as f:
+                    f.write(img_response.content)
+
+                size = len(img_response.content) / 1024
+                print(f"✅ {size:.1f}KB")
+                success_count += 1
+            else:
+                print(f"❌ HTTP {img_response.status_code}")
+
+        except Exception as e:
+            print(f"❌ {str(e)[:30]}")
+
+        time.sleep(0.3)
+
+    print(f"\n🎉 下载完成!")
+    print(f"   图片: {success_count}/{len(note_info['image_urls'])}")
+    print(f"   位置: {note_path.absolute()}")
+
+    return note_path
+
+
 # ==================== 主程序 ====================
 
 def main():
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="小红书图文笔记分析工具",
+        description="小红书图文笔记分析工具（支持从URL直接下载并分析）",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 使用示例:
 
-1. 分析单个笔记（自动检测风格）:
+1. 从 URL 直接下载并分析（推荐）:
+   python xhs_image_analysis.py --url "小红书完整链接"
+
+2. 分析单个笔记（自动检测风格）:
    python xhs_image_analysis.py --dir "xhs_images/用户名/笔记标题"
 
-2. 指定内容风格:
+3. 指定内容风格:
    python xhs_image_analysis.py --dir "images" --style quote_wisdom
 
-3. 批量分析用户的所有笔记:
+4. 批量分析用户的所有笔记:
    python xhs_image_analysis.py --user-dir "xhs_images/塑料叉FOKU"
 
-4. 读取指定文案文件:
+5. 读取指定文案文件:
    python xhs_image_analysis.py --dir "images" --text-file "my_content.txt"
 
-5. 使用不同的模型:
-   python xhs_image_analysis.py --dir "images" --model flash
+6. 使用不同的模型:
+   python xhs_image_analysis.py --url "笔记链接" --model flash
+
+7. 上传图片到 GitHub:
+   python xhs_image_analysis.py --url "笔记链接" --upload-github
         """
     )
 
+    parser.add_argument('--url', help='小红书笔记链接（会自动下载并分析）')
     parser.add_argument('--dir', help='单个笔记的图片文件夹路径')
     parser.add_argument('--user-dir', help='用户文件夹路径（批量处理该用户的所有笔记）')
     parser.add_argument('--style', choices=list(CONTENT_STYLES.keys()),
@@ -2225,6 +2877,10 @@ def main():
     parser.add_argument('--api-key', help='Gemini API Key（覆盖配置文件）')
     parser.add_argument('--list-styles', action='store_true',
                         help='列出所有支持的内容风格类型')
+    parser.add_argument('--download-only', action='store_true',
+                        help='只下载不分析（仅用于 --url）')
+    parser.add_argument('--upload-github', action='store_true',
+                        help='上传图片到 GitHub CDN（需要配置 GITHUB_TOKEN 和 GITHUB_REPO）')
 
     args = parser.parse_args()
 
@@ -2238,7 +2894,7 @@ def main():
         return
 
     # 检查参数
-    if not args.dir and not args.user_dir:
+    if not args.url and not args.dir and not args.user_dir:
         parser.print_help()
         return
 
@@ -2253,6 +2909,37 @@ def main():
     print(f"🖼️  小红书图文笔记分析工具")
     print(f"{'='*80}")
 
+    # 处理 URL 下载
+    if args.url:
+        print(f"\n📥 从 URL 下载笔记...")
+        note_dir = download_xhs_note(args.url)
+
+        if not note_dir:
+            print(f"\n❌ 下载失败!")
+            return
+
+        if args.download_only:
+            print(f"\n✅ 下载完成（不分析）")
+            return
+
+        # 下载后自动分析
+        print(f"\n🤖 开始分析...")
+        success = process_single_note(
+            image_dir=str(note_dir),
+            analyzer=analyzer,
+            style=args.style,
+            auto_style=args.auto_style,
+            text_file=None,
+            output_dir=args.output,
+            upload_github=args.upload_github
+        )
+
+        if success:
+            print(f"\n✅ 完成!")
+        else:
+            print(f"\n❌ 分析失败!")
+        return
+
     # 处理单个笔记
     if args.dir:
         success = process_single_note(
@@ -2261,7 +2948,8 @@ def main():
             style=args.style,
             auto_style=args.auto_style,
             text_file=args.text_file,
-            output_dir=args.output
+            output_dir=args.output,
+            upload_github=args.upload_github
         )
 
         if success:

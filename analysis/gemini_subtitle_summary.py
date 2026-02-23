@@ -46,11 +46,7 @@ except ImportError:
         print("请运行: pip install google-genai")
         sys.exit(1)
 
-# Windows编码修复
-if sys.platform == 'win32':
-    import io
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+
 
 # 线程安全的打印锁
 print_lock = threading.Lock()
@@ -622,6 +618,60 @@ class GeminiSummarizer:
 
 # ==================== 主处理逻辑 ====================
 
+def process_video_analysis_file(video_analysis_file: Path, index: int, total: int,
+                                 csv_data: Dict[str, Dict] = None) -> Dict:
+    """
+    处理视频分析文件（直接读取已有的分析结果，无需再次调用 Gemini）
+
+    Args:
+        video_analysis_file: 视频分析 markdown 文件路径
+        index: 当前索引
+        total: 总数
+        csv_data: CSV 数据字典
+
+    Returns:
+        处理结果字典
+    """
+    result = {
+        'index': index,
+        'title': '',
+        'success': False,
+        'summary': '',
+        'error': None,
+        'is_video_analysis': True  # 标记为视频分析类型
+    }
+
+    try:
+        # 提取标题
+        title = video_analysis_file.stem.replace('_视频分析', '')
+        result['title'] = title
+
+        with print_lock:
+            print(f"[{index}/{total}] 📖 读取视频分析: {title[:50]}")
+
+        # 读取文件内容
+        with open(video_analysis_file, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        if not content:
+            result['error'] = '文件内容为空'
+            return result
+
+        # 视频分析文件已经是完整的 Markdown 格式，直接作为摘要
+        result['summary'] = content
+        result['success'] = True
+
+        with print_lock:
+            print(f"   └─ ✅ 成功")
+
+    except Exception as e:
+        result['error'] = str(e)
+        with print_lock:
+            print(f"   └─ ❌ 失败: {str(e)[:50]}")
+
+    return result
+
+
 def process_single_video(srt_file: Path, index: int, total: int, model: str, api_key: str,
                         csv_data: Dict[str, Dict] = None) -> Dict:
     """
@@ -765,11 +815,21 @@ def process_subtitles(subtitle_dir: str, model: str = 'flash-lite',
     else:
         print(f"⚠️  未找到汇总 MD 文件，将不显示视频详细信息")
 
-    # 查找所有 SRT 文件
+    # 查找所有 SRT 文件和视频分析文件
     all_srt_files = list(subtitle_path.glob("*.srt"))
-    if not all_srt_files:
-        print(f"❌ 未找到 SRT 文件")
+    video_analysis_files = list(subtitle_path.glob("*_视频分析.md"))
+
+    if not all_srt_files and not video_analysis_files:
+        print(f"❌ 未找到 SRT 文件或视频分析文件")
         return 0, 0, None
+
+    # 统计文件类型
+    file_count = len(all_srt_files) + len(video_analysis_files)
+    if all_srt_files:
+        print(f"📄 找到 {len(all_srt_files)} 个字幕文件")
+    if video_analysis_files:
+        print(f"🎬 找到 {len(video_analysis_files)} 个视频分析文件")
+    print(f"📊 共计 {file_count} 个文件需要处理")
 
     # 报告文件路径
     output_dir = subtitle_path.parent
@@ -784,28 +844,42 @@ def process_subtitles(subtitle_dir: str, model: str = 'flash-lite',
         if processed_titles:
             print(f"📋 已处理 {len(processed_titles)} 个视频（增量模式）")
 
-            # 过滤掉已处理的
+            # 过滤掉已处理的 SRT 文件
             new_srt_files = []
             for srt_file in all_srt_files:
                 title = srt_file.stem
                 if title not in processed_titles:
                     new_srt_files.append(srt_file)
                 else:
-                    print(f"   ⏭️  跳过: {title}")
+                    print(f"   ⏭️  跳过 SRT: {title}")
 
             srt_files = new_srt_files
+
+            # 过滤掉已处理的视频分析文件
+            new_video_files = []
+            for video_file in video_analysis_files:
+                title = video_file.stem.replace('_视频分析', '')
+                if title not in processed_titles:
+                    new_video_files.append(video_file)
+                else:
+                    print(f"   ⏭️  跳过视频分析: {title}")
+
+            video_analysis_files = new_video_files
 
             if append and report_path.exists():
                 # 读取已有结果用于追加
                 existing_results = parse_existing_report_results(report_path)
 
-    if not srt_files:
+    # 合并所有待处理文件
+    all_files = srt_files + video_analysis_files
+
+    if not all_files:
         print("ℹ️ 没有需要处理的新视频")
         if append and existing_results:
             print(f"   保留已有的 {len(existing_results)} 个结果")
         return 0, 0, report_path
 
-    print(f"📄 待处理 {len(srt_files)} 个字幕文件（共 {len(all_srt_files)} 个）")
+    print(f"📄 待处理 {len(all_files)} 个文件（SRT: {len(srt_files)}, 视频分析: {len(video_analysis_files)}）")
     print(f"⚡ 并发模式: {max_workers} 个线程同时处理")
     print("=" * 60)
 
@@ -826,8 +900,16 @@ def process_subtitles(subtitle_dir: str, model: str = 'flash-lite',
     with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="Worker") as executor:
         # 提交所有任务
         futures = []
-        for i, srt_file in enumerate(srt_files, 1):
-            future = executor.submit(process_single_video, srt_file, i, len(srt_files), model, api_key, video_info_map)
+        for i, file_path in enumerate(all_files, 1):
+            # 判断文件类型
+            is_video_analysis = file_path.suffix == '.md' and '_视频分析' in file_path.stem
+
+            if is_video_analysis:
+                # 视频分析文件：直接读取内容，无需再次调用 Gemini
+                future = executor.submit(process_video_analysis_file, file_path, i, len(all_files), video_info_map)
+            else:
+                # SRT 文件：调用 Gemini 生成摘要
+                future = executor.submit(process_single_video, file_path, i, len(all_files), model, api_key, video_info_map)
             futures.append(future)
 
         # 收集结果
@@ -838,7 +920,7 @@ def process_subtitles(subtitle_dir: str, model: str = 'flash-lite',
             # 每处理完一个就保存进度
             with results_lock:
                 temp_results = list(all_results)
-            _save_progress(report_path, author_name, srt_files, temp_results, video_info_map, existing_results)
+            _save_progress(report_path, author_name, all_files, temp_results, video_info_map, existing_results)
 
     # 按原始顺序排序结果
     all_results.sort(key=lambda x: x['index'])
@@ -908,7 +990,13 @@ def process_subtitles(subtitle_dir: str, model: str = 'flash-lite',
             if video_info:
                 f.write(format_video_info_header(video_info, item['file']))
 
-            f.write(f"### {title}\n\n")
+            # 标记分析类型
+            if item.get('is_video_analysis'):
+                f.write(f"### {title} 🎬\n\n")
+                f.write(f"*📌 来源: Gemini 视频分析（无字幕备选方案）*\n\n")
+            else:
+                f.write(f"### {title}\n\n")
+
             f.write(f"{item['summary']}\n\n")
             f.write(f"*来源文件: {item['file']}*\n\n")
 

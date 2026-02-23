@@ -48,6 +48,7 @@ SCRIPT_DIR = Path(__file__).parent.parent  # 项目根目录
 MEDIA_CRAWLER_DIR = SCRIPT_DIR / "MediaCrawler"
 SUBTITLE_FETCH_SCRIPT = SCRIPT_DIR / "utils" / "batch_subtitle_fetch.py"
 SUMMARY_SCRIPT = SCRIPT_DIR / "analysis" / "gemini_subtitle_summary.py"
+FALLBACK_PROCESSOR_SCRIPT = SCRIPT_DIR / "utils" / "video_fallback_processor.py"
 
 # 输出路径 - 统一保存到 MediaCrawler 目录
 MEDIA_CRAWLER_OUTPUT = MEDIA_CRAWLER_DIR / "bilibili_videos_output"
@@ -264,6 +265,61 @@ def generate_summary(user_name: str, model: str = 'flash-lite', jobs: int = 3, i
         return False
 
 
+# ==================== 步骤4: 处理无字幕视频（备选方案） ====================
+
+def process_fallback_videos(csv_path: Path, model: str = 'flash-lite', limit: int = None) -> bool:
+    """
+    步骤4: 处理无字幕视频（使用视频下载+Gemini分析作为备选方案）
+    """
+    print("\n" + "=" * 70)
+    print("🎬 步骤 4/4: 处理无字幕视频 (Gemini视频分析)")
+    print("=" * 70)
+
+    if not csv_path or not csv_path.exists():
+        print(f"❌ CSV文件不存在: {csv_path}")
+        return False
+
+    if not FALLBACK_PROCESSOR_SCRIPT.exists():
+        print(f"❌ 找不到脚本: {FALLBACK_PROCESSOR_SCRIPT}")
+        return False
+
+    print(f"📄 CSV文件: {csv_path}")
+    if limit:
+        print(f"🔢 限制数量: {limit}")
+    print(f"🤖 模型: {model}")
+
+    # 动态导入并运行
+    try:
+        # 添加 utils 目录到路径
+        sys.path.insert(0, str(FALLBACK_PROCESSOR_SCRIPT.parent))
+
+        # 导入模块
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "video_fallback_processor",
+            FALLBACK_PROCESSOR_SCRIPT
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        # 调用处理函数
+        result = module.process_fallback_videos(str(csv_path), model=model, limit=limit)
+
+        if result.get('total', 0) > 0:
+            success_rate = result.get('success', 0) / result.get('total', 1) * 100
+            print(f"\n✅ 备选方案处理完成! 成功率: {success_rate:.1f}%")
+            return True
+        else:
+            print(f"\n✅ 没有需要处理的视频")
+            return True
+
+    except Exception as e:
+        print(f"❌ 备选方案处理失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 # ==================== 工具函数 ====================
 
 def extract_uid_from_url(url: str) -> str:
@@ -307,6 +363,9 @@ def main():
 
   # 追加模式 - 将新结果追加到现有摘要
   python utils/auto_bili_workflow.py --user "用户名" --append --incremental
+
+  # 启用无字幕视频备选方案（视频下载+Gemini分析）
+  python utils/auto_bili_workflow.py --csv "bilibili_videos_output/用户名.csv" --enable-fallback
         """
     )
 
@@ -327,6 +386,10 @@ def main():
                         help="增量模式：跳过已处理的视频")
     parser.add_argument("--append", "-a", action="store_true",
                         help="追加模式：将新结果追加到现有摘要文件")
+    parser.add_argument("--enable-fallback", action="store_true",
+                        help="启用无字幕视频备选方案：下载视频并使用Gemini分析")
+    parser.add_argument("--fallback-limit", type=int, default=None,
+                        help="备选方案处理数量限制（测试用）")
 
     args = parser.parse_args()
 
@@ -384,6 +447,12 @@ def main():
                                        incremental=args.incremental, append=args.append)
 
             if success:
+                # ==================== 步骤4: 处理无字幕视频（备选方案） ====================
+                if args.enable_fallback and csv_path:
+                    fallback_success = process_fallback_videos(
+                        csv_path, args.model, args.fallback_limit
+                    )
+
                 print("\n" + "=" * 70)
                 print("🎉 工作流程完成!")
                 print("=" * 70)
@@ -392,6 +461,11 @@ def main():
                     print(f"  - CSV: {csv_path}")
                 print(f"  - 字幕: {SUBTITLE_OUTPUT / user_name}")
                 print(f"  - AI摘要: {SUBTITLE_OUTPUT / f'{user_name}_AI总结.md'}")
+
+                if args.enable_fallback:
+                    print(f"\n💡 无字幕视频已通过备选方案处理:")
+                    print(f"  - 视频下载目录: downloaded_videos/{user_name}/")
+                    print(f"  - 视频分析: {SUBTITLE_OUTPUT / user_name}/")
             else:
                 print("\n⚠️ AI摘要生成失败")
                 return 1

@@ -101,10 +101,11 @@ async def fetch_subtitle_srt(bvid: str, title: str, author_dir: Path) -> dict:
         {
             'success': bool,
             'srt_path': str or None,
-            'error': str or None
+            'error': str or None,
+            'fallback_needed': bool  # 是否需要使用视频下载+Gemini分析作为备选方案
         }
     """
-    result = {'success': False, 'srt_path': None, 'error': None}
+    result = {'success': False, 'srt_path': None, 'error': None, 'fallback_needed': False}
 
     try:
         v = video.Video(bvid=bvid, credential=get_credential())
@@ -120,6 +121,7 @@ async def fetch_subtitle_srt(bvid: str, title: str, author_dir: Path) -> dict:
 
         if not subtitles:
             result['error'] = '该视频无字幕'
+            result['fallback_needed'] = True  # 标记需要使用视频下载+Gemini分析备选方案
             return result
 
         # 下载第一条字幕（通常是中文）
@@ -211,11 +213,16 @@ def generate_summary_md(videos: list, author_name: str, output_dir: Path, total_
         success_count = sum(1 for v in videos if v.get('subtitle_status') == 'success')
         fail_count = sum(1 for v in videos if v.get('subtitle_status') == 'failed')
         pending_count = len(videos) - success_count - fail_count
+        fallback_needed_count = sum(1 for v in videos if v.get('fallback_needed', False))
 
         f.write("## 统计\n\n")
         f.write(f"- ✅ 成功提取: {success_count}\n")
         f.write(f"- ❌ 提取失败: {fail_count}\n")
         f.write(f"- ⏳ 未处理/跳过: {pending_count}\n")
+
+        if fallback_needed_count > 0:
+            f.write(f"- 🎬 需要视频分析备选方案: {fallback_needed_count}\n")
+            f.write(f"\n💡 提示: 可以运行 `python utils/auto_bili_workflow.py --csv \"{csv_path.name}\" --enable-fallback` 来处理无字幕视频\n")
 
         # 失败列表
         failed_videos = [v for v in videos if v.get('subtitle_status') == 'failed']
@@ -313,6 +320,13 @@ async def process_batch(csv_path: str, limit: int = None, force: bool = False):
             print(f"  错误原因: {result['error']}")
             video_data['subtitle_status'] = 'failed'
             video_data['subtitle_error'] = result['error']
+
+            # 添加fallback跟踪字段
+            if result.get('fallback_needed', False):
+                video_data['fallback_needed'] = True
+                video_data['fallback_status'] = 'pending'
+                print(f"  💡 将使用视频下载+Gemini分析作为备选方案")
+
             fail_count += 1
 
         # 总进度

@@ -42,7 +42,14 @@
       "Bash(conda run:*)",
       "Bash(conda env list:*)",
       "Bash(/e/Anaconda/python:*)",
-      "Bash(uv sync:*)"
+      "Bash(uv sync:*)",
+      "Bash(call conda activate:*)",
+      "Bash(source:*)",
+      "Bash(where:*)",
+      "Bash(git checkout:*)",
+      "Bash(set:*)",
+      "Bash(echo:*)",
+      "Bash(E:Anacondaenvsbilisubpython.exe bot/multi_platform_summary_bot.py)"
     ]
   }
 }

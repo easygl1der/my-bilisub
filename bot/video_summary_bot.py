@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Telegram Bot - 视频总结（修复版）
+Telegram Bot - 多平台内容总结（B站+小红书）
 
 功能：
-- 识别B站视频链接
-- 提取字幕
-- AI 生成总结
+- 识别B站视频链接，提取字幕，AI生成总结
+- 识别小红书笔记链接，AI分析内容
+- 刷B站/小红书主页并生成AI分析报告
 
 使用方法：
     E:\Anaconda\envs\bilisub\python.exe bot\video_summary_bot.py
@@ -231,10 +231,11 @@ class LinkAnalyzer:
     """链接分析器"""
 
     def analyze(self, url: str) -> dict:
-        """分析B站视频链接"""
+        """分析链接（支持B站和小红书）"""
         url = url.strip()
         result = {'platform': 'unknown', 'type': 'unknown', 'id': '', 'url': url}
 
+        # B站检测
         if 'bilibili.com' in url or 'b23.tv' in url:
             result['platform'] = 'bilibili'
             # 提取 BV 号
@@ -242,6 +243,19 @@ class LinkAnalyzer:
             if match:
                 result['type'] = 'video'
                 result['id'] = match.group(1)
+
+        # 小红书检测
+        elif 'xiaohongshu.com' in url or 'xhslink.com' in url:
+            result['platform'] = 'xiaohongshu'
+            # 提取笔记ID或用户ID
+            if '/user/profile/' in url:
+                result['type'] = 'user'
+                result['id'] = url.split('/user/profile/')[-1].split('?')[0]
+            elif '/explore/' in url:
+                result['type'] = 'note'
+                result['id'] = url.split('/explore/')[-1].split('?')[0]
+            else:
+                result['type'] = 'note'
 
         return result
 
@@ -409,18 +423,19 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     current_mode = user_manager.get_mode(user_id)
 
-    welcome_msg = f"""👋 你好！我是视频总结 Bot
+    welcome_msg = f"""👋 你好！我是多平台内容分析 Bot
 
 🎯 当前模式: {current_mode.upper()}
 
 功能：
-• 识别B站视频链接
-• 提取字幕
-• AI生成总结
+• B站视频 - 提取字幕，AI生成总结
+• 小红书笔记 - AI分析图文内容
+• 刷B站/小红书主页 - 生成AI分析报告
 
 使用方法：
-• 发送视频链接即可开始分析
+• 发送B站/小红书链接即可开始分析
 • 发送 /mode 切换分析模式
+• 发送 /scrape_bilibili 刷B站首页推荐
 • 发送 /help 查看帮助"""
 
     await update.message.reply_text(welcome_msg)
@@ -475,8 +490,22 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 • /stop - 停止当前分析
 • /help - 查看帮助
 
+🆕 刷主页功能：
+• /scrape_bilibili - 刷B站首页推荐
+  格式: /scrape_bilibili [刷新次数] [最大视频数]
+  示例: /scrape_bilibili 3 50
+  默认: 刷新3次，最多50个视频
+
+• /scrape_xiaohongshu - 刷小红书推荐
+  格式: /scrape_xiaohongshu [刷新次数] [最大笔记数]
+  示例: /scrape_xiaohongshu 3 50
+  默认: 刷新3次，最多50个笔记
+
 💡 使用方法：
-直接发送B站视频链接即可
+• 发送B站视频链接进行视频分析
+• 发送小红书笔记链接进行图文分析
+• 使用 /scrape_bilibili 自动刷B站首页
+• 使用 /scrape_xiaohongshu 自动刷小红书推荐
 
 💡 分析统计：
 分析完成后会显示耗时和Token消耗"""
@@ -492,6 +521,314 @@ async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🛑 正在停止分析...")
     else:
         await update.message.reply_text("ℹ️ 当前没有正在进行的分析")
+
+
+async def cmd_scrape_bilibili(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """刷B站首页推荐"""
+    user_id = update.effective_user.id
+    task_id = f"bili_scrape_{user_id}"
+
+    # 检查是否已有任务在运行
+    if not user_manager.start_task(user_id, task_id):
+        await update.message.reply_text("⚠️ 你已有任务在运行中，请先等待完成或使用 /stop 停止")
+        return
+
+    # 解析参数
+    args = context.args
+    refresh_count = 3
+    max_videos = 50
+
+    try:
+        if args and len(args) >= 1:
+            refresh_count = int(args[0])
+        if args and len(args) >= 2:
+            max_videos = int(args[1])
+    except ValueError:
+        await update.message.reply_text("❌ 参数错误，格式: /scrape_bilibili [刷新次数] [最大视频数]\n示例: /scrape_bilibili 3 50")
+        user_manager.end_task(user_id)
+        return
+
+    status_msg = await update.message.reply_text(
+        f"🚀 开始刷B站首页推荐\n\n"
+        f"📊 配置:\n"
+        f"  • 刷新次数: {refresh_count}\n"
+        f"  • 最大视频数: {max_videos}\n\n"
+        f"⏳ 启动中..."
+    )
+
+    try:
+        import subprocess
+        from datetime import datetime
+
+        # 构建命令
+        script_path = Path(__file__).parent.parent / "ai_bilibili_homepage.py"
+        cmd = [
+            r"E:\Anaconda\envs\bilisub\python.exe",
+            str(script_path),
+            "--mode", "full",
+            "--refresh-count", str(refresh_count),
+            "--max-videos", str(max_videos)
+        ]
+
+        await status_msg.edit_text(
+            f"🚀 开始刷B站首页推荐\n\n"
+            f"📊 配置:\n"
+            f"  • 刷新次数: {refresh_count}\n"
+            f"  • 最大视频数: {max_videos}\n\n"
+            f"📡 正在采集首页推荐..."
+        )
+
+        # 执行采集脚本
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(Path(__file__).parent.parent)
+        )
+
+        # 等待完成
+        stdout, stderr = await process.communicate()
+
+        if process.returncode == 0:
+            # 查找生成的报告文件
+            from datetime import datetime
+            date_str = datetime.now().strftime('%Y-%m-%d')
+            report_path = Path(__file__).parent.parent / "MediaCrawler" / "bilibili_subtitles" / f"homepage_{date_str}_AI总结.md"
+
+            if report_path.exists():
+                # 读取报告内容
+                with open(report_path, 'r', encoding='utf-8') as f:
+                    report_content = f.read()
+
+                # 发送摘要
+                summary_lines = []
+                for line in report_content.split('\n')[:50]:  # 前50行
+                    summary_lines.append(line)
+                    if len('\n'.join(summary_lines)) > 3500:  # Telegram消息长度限制
+                        break
+
+                summary = '\n'.join(summary_lines)
+
+                await status_msg.edit_text(
+                    f"✅ B站首页推荐刷取完成！\n\n"
+                    f"📊 采集信息:\n"
+                    f"  • 刷新次数: {refresh_count}\n"
+                    f"  • 最大视频数: {max_videos}\n\n"
+                    f"📝 以下是报告摘要:\n\n"
+                    f"{summary}\n\n"
+                    f"📁 完整报告已保存到: {report_path.name}"
+                )
+
+                # 如果内容太长，分批发送剩余部分
+                if len(report_content) > len(summary):
+                    remaining_content = report_content[len(summary):]
+                    # 分割成多个消息，每个不超过4000字符
+                    chunks = [remaining_content[i:i+4000] for i in range(0, len(remaining_content), 4000)]
+                    for chunk in chunks:
+                        await update.message.reply_text(f"```\n{chunk}\n```", parse_mode='Markdown')
+            else:
+                await status_msg.edit_text(
+                    f"✅ 刷取完成，但未找到报告文件\n\n"
+                    f"可能的原因:\n"
+                    f"  • 采集失败\n"
+                    f"  • AI分析失败\n"
+                    f"  • 文件路径错误\n\n"
+                    f"请检查控制台日志"
+                )
+        else:
+            error_msg = stderr.decode('utf-8', errors='ignore')[-500:]
+            await status_msg.edit_text(
+                f"❌ 刷取失败\n\n"
+                f"错误信息:\n{error_msg}"
+            )
+
+    except Exception as e:
+        await status_msg.edit_text(f"❌ 执行出错: {str(e)}")
+    finally:
+        user_manager.end_task(user_id)
+
+
+async def handle_xiaohongshu_note(update: Update, result: dict, status_msg):
+    """处理小红书笔记（使用unified_content_analyzer）"""
+    try:
+        import subprocess
+        from datetime import datetime
+
+        # 使用统一分析入口
+        cmd = [
+            sys.executable,
+            str(Path(__file__).parent.parent / "utils" / "unified_content_analyzer.py"),
+            '--url', result['url']
+        ]
+
+        await status_msg.edit_text(
+            f"📱 识别到小红书笔记\n"
+            f"ID: {result['id']}\n\n"
+            f"⏳ 正在分析..."
+        )
+
+        # 执行分析
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(Path(__file__).parent.parent),
+            encoding='utf-8',
+            errors='replace'
+        )
+
+        # 等待完成
+        await process.communicate()
+
+        if process.returncode == 0:
+            await status_msg.edit_text(
+                f"✅ 小红书笔记分析完成！\n\n"
+                f"📁 报告已保存到 output/ 目录"
+            )
+        else:
+            await status_msg.edit_text(
+                f"⚠️ 分析过程中出现警告\n\n"
+                f"💡 请检查日志文件"
+            )
+
+    except FileNotFoundError:
+        await status_msg.edit_text(
+            f"⚠️ 小红书分析功能需要额外配置\n\n"
+            f"💡 命令行版本:\n"
+            f"python utils/unified_content_analyzer.py --url \"{result['url']}\""
+        )
+    except Exception as e:
+        await status_msg.edit_text(f"❌ 处理出错: {str(e)[:200]}")
+
+
+async def cmd_scrape_xiaohongshu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """刷小红书推荐"""
+    user_id = update.effective_user.id
+    task_id = f"xhs_scrape_{user_id}"
+
+    # 检查是否已有任务在运行
+    if not user_manager.start_task(user_id, task_id):
+        await update.message.reply_text("⚠️ 你已有任务在运行中，请先等待完成或使用 /stop 停止")
+        return
+
+    # 解析参数
+    args = context.args
+    refresh_count = 3
+    max_notes = 50
+
+    try:
+        if args and len(args) >= 1:
+            refresh_count = int(args[0])
+        if args and len(args) >= 2:
+            max_notes = int(args[1])
+    except ValueError:
+        await update.message.reply_text("❌ 参数错误，格式: /scrape_xiaohongshu [刷新次数] [最大笔记数]\n示例: /scrape_xiaohongshu 3 50")
+        user_manager.end_task(user_id)
+        return
+
+    status_msg = await update.message.reply_text(
+        f"🚀 开始刷小红书推荐\n\n"
+        f"📊 配置:\n"
+        f"  • 刷新次数: {refresh_count}\n"
+        f"  • 最大笔记数: {max_notes}\n\n"
+        f"⏳ 启动中..."
+    )
+
+    try:
+        from datetime import datetime
+
+        # 构建命令（使用新的小红书首页刷取脚本）
+        script_path = Path(__file__).parent.parent / "ai_xiaohongshu_homepage.py"
+        cmd = [
+            sys.executable,
+            str(script_path),
+            "--mode", "full",
+            "--refresh-count", str(refresh_count),
+            "--max-notes", str(max_notes)
+        ]
+
+        await status_msg.edit_text(
+            f"🚀 开始刷小红书推荐\n\n"
+            f"📊 配置:\n"
+            f"  • 刷新次数: {refresh_count}\n"
+            f"  • 最大笔记数: {max_notes}\n\n"
+            f"📡 正在采集推荐内容..."
+        )
+
+        # 执行采集脚本
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(Path(__file__).parent.parent)
+        )
+
+        # 等待完成
+        stdout, stderr = await process.communicate()
+
+        if process.returncode == 0:
+            # 查找生成的报告文件
+            date_str = datetime.now().strftime('%Y-%m-%d')
+            report_path = Path(__file__).parent.parent / "output" / "xiaohongshu_homepage" / f"xiaohongshu_homepage_{date_str}_AI总结.md"
+
+            if report_path.exists():
+                # 读取报告内容
+                with open(report_path, 'r', encoding='utf-8') as f:
+                    report_content = f.read()
+
+                # 发送摘要
+                summary_lines = []
+                for line in report_content.split('\n')[:50]:  # 前50行
+                    summary_lines.append(line)
+                    if len('\n'.join(summary_lines)) > 3500:  # Telegram消息长度限制
+                        break
+
+                summary = '\n'.join(summary_lines)
+
+                await status_msg.edit_text(
+                    f"✅ 小红书推荐刷取完成！\n\n"
+                    f"📊 采集信息:\n"
+                    f"  • 刷新次数: {refresh_count}\n"
+                    f"  • 最大笔记数: {max_notes}\n\n"
+                    f"📝 以下是报告摘要:\n\n"
+                    f"{summary}\n\n"
+                    f"📁 完整报告已保存到: {report_path.name}"
+                )
+
+                # 如果内容太长，分批发送剩余部分
+                if len(report_content) > len(summary):
+                    remaining_content = report_content[len(summary):]
+                    # 分割成多个消息，每个不超过4000字符
+                    chunks = [remaining_content[i:i+4000] for i in range(0, len(remaining_content), 4000)]
+                    for chunk in chunks:
+                        await update.message.reply_text(f"```\n{chunk}\n```", parse_mode='Markdown')
+            else:
+                await status_msg.edit_text(
+                    f"✅ 刷取完成，但未找到报告文件\n\n"
+                    f"可能的原因:\n"
+                    f"  • 采集失败\n"
+                    f"  • AI分析失败\n"
+                    f"  • 文件路径错误\n\n"
+                    f"请检查控制台日志"
+                )
+        else:
+            error_msg = stderr.decode('utf-8', errors='ignore')[-500:]
+            await status_msg.edit_text(
+                f"❌ 刷取失败\n\n"
+                f"错误信息:\n{error_msg}"
+            )
+
+    except FileNotFoundError:
+        await status_msg.edit_text(
+            f"⚠️ 小红书刷取功能需要额外配置\n\n"
+            f"💡 请确保以下文件存在:\n"
+            f"  • ai_xiaohongshu_homepage.py\n"
+            f"  • config/cookies.txt (小红书Cookie)"
+        )
+    except Exception as e:
+        await status_msg.edit_text(f"❌ 执行出错: {str(e)}")
+    finally:
+        user_manager.end_task(user_id)
 
 
 async def btn_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -535,46 +872,62 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 分析链接
     result = analyzer.analyze(url)
 
-    if result['platform'] != 'bilibili' or result['type'] != 'video':
-        await update.message.reply_text("⚠️ 暂时只支持B站视频链接")
-        return
+    # B站视频处理
+    if result['platform'] == 'bilibili' and result['type'] == 'video':
+        # 获取用户的分析模式
+        user_id = update.effective_user.id
+        mode = user_manager.get_mode(user_id)
 
-    # 获取用户的分析模式
-    user_id = update.effective_user.id
-    mode = user_manager.get_mode(user_id)
+        # 开始处理
+        status_msg = await update.message.reply_text(
+            f"📺 识别到B站视频\n"
+            f"BV号: {result['id']}\n"
+            f"📝 模式: {mode.upper()}\n\n"
+            f"📥 正在提取字幕..."
+        )
 
-    # 开始处理
-    status_msg = await update.message.reply_text(
-        f"📺 识别到B站视频\n"
-        f"BV号: {result['id']}\n"
-        f"📝 模式: {mode.upper()}\n\n"
-        f"📥 正在提取字幕..."
-    )
+        # 提取字幕
+        fetch_result = await summarizer.fetch_subtitle(result['id'])
 
-    # 提取字幕
-    fetch_result = await summarizer.fetch_subtitle(result['id'])
+        if not fetch_result['success']:
+            await status_msg.edit_text(f"❌ 字幕提取失败\n\n{fetch_result['error']}")
+            return
 
-    if not fetch_result['success']:
-        await status_msg.edit_text(f"❌ 字幕提取失败\n\n{fetch_result['error']}")
-        return
+        await status_msg.edit_text(
+            f"✅ 字幕提取成功\n"
+            f"标题: {fetch_result['title'][:30]}...\n\n"
+            f"🤖 正在AI分析 (模式: {mode.upper()})..."
+        )
 
-    await status_msg.edit_text(
-        f"✅ 字幕提取成功\n"
-        f"标题: {fetch_result['title'][:30]}...\n\n"
-        f"🤖 正在AI分析 (模式: {mode.upper()})..."
-    )
+        # 生成总结（使用用户选择的模式）
+        summary = await summarizer.generate_summary(
+            fetch_result['srt_path'],
+            fetch_result['title'],
+            url,
+            mode
+        )
 
-    # 生成总结（使用用户选择的模式）
-    summary = await summarizer.generate_summary(
-        fetch_result['srt_path'],
-        fetch_result['title'],
-        url,
-        mode
-    )
+        # 发送结果
+        await status_msg.delete()
+        await update.message.reply_text(summary, disable_web_page_preview=True)
 
-    # 发送结果
-    await status_msg.delete()
-    await update.message.reply_text(summary, disable_web_page_preview=True)
+    # 小红书笔记处理
+    elif result['platform'] == 'xiaohongshu' and result['type'] == 'note':
+        status_msg = await update.message.reply_text(
+            f"📱 识别到小红书笔记\n"
+            f"ID: {result['id']}\n\n"
+            f"⏳ 准备分析..."
+        )
+        await handle_xiaohongshu_note(update, result, status_msg)
+
+    else:
+        await update.message.reply_text(
+            f"⚠️ 暂不支持的内容类型\n\n"
+            f"检测到: {result['platform']} - {result['type']}\n\n"
+            f"支持的内容:\n"
+            f"• B站视频链接\n"
+            f"• 小红书笔记链接"
+        )
 
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -586,9 +939,10 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     print(f"\n{'='*60}")
-    print(f"🤖 视频总结 Bot 启动中...")
+    print(f"🤖 多平台内容分析 Bot 启动中...")
     print(f"{'='*60}\n")
     print(f"✅ Bot Token: {BOT_TOKEN[:20]}...{BOT_TOKEN[-10:]}")
+    print(f"🎯 支持平台: B站、小红书")
 
     # 创建应用
     builder = Application.builder().token(BOT_TOKEN)
@@ -606,6 +960,8 @@ def main():
     application.add_handler(CommandHandler("mode", cmd_mode))
     application.add_handler(CommandHandler("stop", cmd_stop))
     application.add_handler(CommandHandler("help", cmd_help))
+    application.add_handler(CommandHandler("scrape_bilibili", cmd_scrape_bilibili))
+    application.add_handler(CommandHandler("scrape_xiaohongshu", cmd_scrape_xiaohongshu))
     application.add_handler(CallbackQueryHandler(btn_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_error_handler(error_handler)
