@@ -134,41 +134,63 @@ async def scrape_xiaohongshu_homepage(
     seen_urls = set()  # 去重
 
     async with async_playwright() as p:
-        # 启动浏览器
-        browser = await p.chromium.launch(headless=False)  # 非无头模式，可以看到登录
-        context = await browser.new_context()
+        # 启动浏览器（非无头模式）
+        browser = await p.chromium.launch(
+            headless=False,
+            args=['--disable-blink-features=AutomationControlled']
+        )
+        context = await browser.new_context(
+            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        )
 
         # 设置Cookie
         if cookie:
-            # 解析Cookie字符串并添加到context
-            cookies = []
-            for item in cookie.split(';'):
-                item = item.strip()
-                if '=' in item:
-                    key, value = item.split('=', 1)
-                    cookies.append({
-                        'name': key,
-                        'value': value,
-                        'domain': '.xiaohongshu.com',
-                        'path': '/'
-                    })
-            await context.add_cookies(cookies)
-            print("✅ Cookie已设置")
+            try:
+                # 解析Cookie字符串并添加到context
+                cookies = []
+                for item in cookie.split(';'):
+                    item = item.strip()
+                    if '=' in item:
+                        key, value = item.split('=', 1)
+                        cookies.append({
+                            'name': key,
+                            'value': value,
+                            'domain': '.xiaohongshu.com',
+                            'path': '/'
+                        })
+                await context.add_cookies(cookies)
+                print("✅ Cookie已设置")
+            except Exception as e:
+                print(f"⚠️  Cookie设置失败: {e}")
+                print("💡 将使用无Cookie模式（可能需要手动登录）")
 
         page = await context.new_page()
 
         print(f"\n📡 访问小红书首页...")
-        await page.goto('https://www.xiaohongshu.com/', wait_until='networkidle')
-        await asyncio.sleep(3)  # 等待页面加载
+        try:
+            # 使用更宽松的等待条件
+            await page.goto('https://www.xiaohongshu.com/', wait_until='domcontentloaded', timeout=60000)
+            await asyncio.sleep(5)  # 等待页面完全加载
+        except Exception as e:
+            print(f"⚠️  页面加载超时或失败: {e}")
+            print("💡 浏览器窗口已打开，你可以手动操作")
 
         # 检查是否需要登录
         try:
-            login_btn = await page.query_selector('button:has-text("登录")')
-            if login_btn:
+            # 等待页面内容加载
+            await asyncio.sleep(2)
+
+            # 检查是否有登录按钮
+            page_content = await page.content()
+            if '登录' in page_content and '注册' in page_content:
                 print("\n⚠️  检测到未登录状态")
-                print("💡 请在浏览器中手动登录")
-                print("⏳ 等待30秒...")
-                await asyncio.sleep(30)
+                print("💡 请在浏览器中手动登录小红书")
+                print("⏳ 等待60秒...")
+                print("💡 登录完成后，脚本会自动继续")
+                await asyncio.sleep(60)
+                print("✅ 继续执行...")
+            else:
+                print("✅ 登录状态正常")
         except:
             pass
 
