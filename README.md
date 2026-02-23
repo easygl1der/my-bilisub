@@ -20,10 +20,10 @@ export GEMINI_API_KEY='your-key'
 # API_CONFIG = {"gemini": {"api_key": "your-key"}}
 
 # 3. 分析单个视频
-python analysis/video_understand_gemini.py -video "视频路径" -m knowledge
+python analysis/video_analyzer.py -video "视频路径" -m knowledge
 
 # 4. 批量分析目录
-python analysis/video_understand_gemini.py -dir "视频目录" -m knowledge
+python analysis/video_analyzer.py -dir "视频目录" -m knowledge
 ```
 
 ---
@@ -85,7 +85,7 @@ python analysis/video_understand_gemini.py -dir "视频目录" -m knowledge
 
 ```bash
 # 分析已下载的视频
-python analysis/video_understand_gemini.py \
+python analysis/video_analyzer.py \
     -video "downloaded/video.mp4" \
     -m knowledge
 ```
@@ -97,7 +97,7 @@ python analysis/video_understand_gemini.py \
 yt-dlp "视频URL" -o "downloaded/%(title)s.%(ext)s"
 
 # 再分析
-python analysis/video_understand_gemini.py \
+python analysis/video_analyzer.py \
     -video "downloaded/video.mp4" \
     -m knowledge
 ```
@@ -106,12 +106,12 @@ python analysis/video_understand_gemini.py \
 
 ```bash
 # 批量分析（自动并发，flash-lite 模型 10 线程）
-python analysis/video_understand_gemini.py \
+python analysis/video_analyzer.py \
     -dir "downloaded_videos" \
     -m knowledge
 
 # 指定并发数
-python analysis/video_understand_gemini.py \
+python analysis/video_analyzer.py \
     -dir "downloaded_videos" \
     -j 5
 ```
@@ -120,7 +120,7 @@ python analysis/video_understand_gemini.py \
 
 ```bash
 # 自动跳过已分析的视频
-python analysis/video_understand_gemini.py \
+python analysis/video_analyzer.py \
     -dir "downloaded_videos" \
     -m knowledge
 ```
@@ -130,7 +130,7 @@ python analysis/video_understand_gemini.py \
 ## 命令行参数
 
 ```
-python analysis/video_understand_gemini.py [选项]
+python analysis/video_analyzer.py [选项]
 
 必需参数（二选一）:
   -video PATH      单个视频文件路径
@@ -177,15 +177,30 @@ Gemini 设置:
 
 ```
 biliSub/
-├── analysis/
-│   └── video_understand_gemini.py    # 主分析工具
-├── config_api.py                     # API 配置文件
-├── requirements.txt                  # 依赖清单
-├── docs/                             # 文档
-│   └── README_FULL.md                # 完整文档
-└── gemini_analysis/                  # 输出目录
-    └── 作者名/
-        └── 视频_时间戳.md
+├── tools/                              # 核心工具
+│   ├── ultimate_transcribe.py          # 主字幕提取工具
+│   ├── check_subtitle.py               # 检查内置字幕
+│   ├── download_videos_from_csv.py      # 批量下载
+│   └── optimize_srt_glm.py           # 字幕优化
+├── analysis/                           # AI 分析模块
+│   ├── video_analyzer.py              # 视频AI分析
+│   ├── subtitle_analyzer.py           # 字幕AI总结
+│   └── image_analyzer.py             # 图文AI分析
+├── workflows/                          # 端到端工作流
+│   ├── video_to_notes.py             # 视频→笔记
+│   ├── ai_bilibili_homepage.py       # B站首页
+│   └── auto_xhs_subtitle_workflow.py  # XHS用户分析
+├── bots/                               # Telegram Bot
+│   └── video_summary_bot.py          # 主Bot
+├── platforms/                          # 平台实现
+│   └── xiaohongshu/                # 小红书功能
+├── utils/                              # 工具模块
+├── config_api.py                       # API 配置文件
+├── FILE_STRUCTURE.md                   # 文件结构说明
+├── requirements.txt                    # 依赖清单
+├── docs/                              # 文档
+│   └── README_FULL.md               # 完整文档
+└── output/                             # 输出目录
 ```
 
 ---
@@ -230,7 +245,7 @@ API_CONFIG = {
 ### 示例 1：分析单个视频
 
 ```bash
-python analysis/video_understand_gemini.py \
+python analysis/video_analyzer.py \
     -video "课程视频.mp4" \
     -m knowledge
 ```
@@ -242,7 +257,7 @@ python analysis/video_understand_gemini.py \
 yt-dlp -f "bestvideo+bestaudio" "频道URL" -o "downloads/%(uploader)s/%(title)s.%(ext)s"
 
 # 批量分析
-python analysis/video_understand_gemini.py \
+python analysis/video_analyzer.py \
     -dir "downloads/UP主名" \
     -m knowledge
 ```
@@ -250,7 +265,7 @@ python analysis/video_understand_gemini.py \
 ### 示例 3：简洁模式快速了解
 
 ```bash
-python analysis/video_understand_gemini.py \
+python analysis/video_analyzer.py \
     -video "video.mp4" \
     -m brief
 ```
@@ -258,7 +273,7 @@ python analysis/video_understand_gemini.py \
 ### 示例 4：访谈对话提取
 
 ```bash
-python analysis/video_understand_gemini.py \
+python analysis/video_analyzer.py \
     -video "访谈.mp4" \
     -m transcript
 ```
@@ -385,6 +400,15 @@ pip install -r requirements.txt
 
 ## 更新日志
 
+### v2.0 (2026-02)
+- 📁 重构项目目录结构
+- 📝 新增 FILE_STRUCTURE.md 详细文档
+- 🔧 移植 MediaCrawler 基础框架（CDP浏览器管理）
+- 🤖 整合 Bot 功能到 bots/ 目录
+- 📦 统一工具、分析、工作流模块
+- 🗄️ 归档重复/过时文件
+- 🔗 修复所有移动文件的导入路径问题
+
 ### v1.2 (2026-02)
 - 新增 Gemini 2.5 系列模型支持
 - 知识库型笔记生成模式
@@ -395,6 +419,7 @@ pip install -r requirements.txt
 
 ## 相关链接
 
+- [文件结构说明](FILE_STRUCTURE.md) - 详细的文件和使用说明
 - [Gemini API 文档](https://ai.google.dev/)
 - [yt-dlp 文档](https://github.com/yt-dlp/yt-dlp)
 - [完整文档](docs/README_FULL.md)

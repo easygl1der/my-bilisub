@@ -78,7 +78,8 @@ def get_bili_cookie() -> str:
 
 # ==================== 视频下载（复用现有代码）====================
 
-def download_single_video(url: str, title: str, output_dir: Path, show_progress: bool = True) -> Optional[Path]:
+def download_single_video(url: str, title: str, output_dir: Path, show_progress: bool = True,
+                          quality: str = 'best') -> Optional[Path]:
     """
     下载单个视频文件（从 download_videos_from_csv.py 复用）
 
@@ -87,6 +88,13 @@ def download_single_video(url: str, title: str, output_dir: Path, show_progress:
         title: 视频标题
         output_dir: 输出目录
         show_progress: 是否显示进度
+        quality: 视频质量选项
+            - 'best': 最高质量（默认）
+            - '1080p': 1080p
+            - '720p': 720p
+            - '480p': 480p
+            - '360p': 360p
+            - 'audio_only': 仅音频（最快，最小）
 
     Returns:
         下载的视频文件路径，失败返回 None
@@ -104,12 +112,32 @@ def download_single_video(url: str, title: str, output_dir: Path, show_progress:
         return output_file
 
     if show_progress:
-        print(f"   └─ 📥 开始下载视频...")
+        quality_label = {
+            'best': '最高质量',
+            '1080p': '1080p',
+            '720p': '720p',
+            '480p': '480p',
+            '360p': '360p',
+            'audio_only': '仅音频'
+        }.get(quality, quality)
+        print(f"   └─ 📥 开始下载视频 (质量: {quality_label})...")
 
     try:
+        # 根据质量设置格式选择器
+        format_selectors = {
+            'best': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+            '1080p': 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best',
+            '720p': 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best',
+            '480p': 'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480][ext=mp4]/best',
+            '360p': 'bestvideo[height<=360][ext=mp4]+bestaudio[ext=m4a]/best[height<=360][ext=mp4]/best',
+            'audio_only': 'bestaudio[ext=m4a]/bestaudio/best'
+        }
+
+        video_format = format_selectors.get(quality, format_selectors['best'])
+
         # 基础配置
         ydl_opts = {
-            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+            'format': video_format,
             'outtmpl': str(output_dir / f"{safe_title}.%(ext)s"),
             'quiet': not show_progress,
             'no_warnings': True,
@@ -183,7 +211,7 @@ def analyze_video_with_existing_processor(video_path: Path, title: str, model: s
     """
     try:
         # 导入已有的 VideoProcessor
-        from analysis.video_understand_gemini import VideoProcessor, get_prompt
+        from analysis.video_analyzer import VideoProcessor, get_prompt
 
         if show_progress := True:
             print(f"   └─ 🤖 Gemini 分析中...")
@@ -301,7 +329,8 @@ def save_analysis_to_subtitle_dir(title: str, video_path: Path, analysis: Dict, 
 # ==================== 主处理逻辑 ====================
 
 def process_single_video(video_data: Dict, download_dir: Path, output_dir: Path,
-                          model: str = 'flash-lite', author_name: str = None) -> Dict:
+                          model: str = 'flash-lite', author_name: str = None,
+                          quality: str = 'best') -> Dict:
     """
     处理单个视频的备选方案
 
@@ -311,6 +340,7 @@ def process_single_video(video_data: Dict, download_dir: Path, output_dir: Path,
         output_dir: 分析结果输出目录
         model: Gemini 模型
         author_name: UP主名称
+        quality: 视频质量选项
 
     Returns:
         处理结果字典
@@ -331,7 +361,7 @@ def process_single_video(video_data: Dict, download_dir: Path, output_dir: Path,
 
     try:
         # 步骤1: 下载视频
-        video_path = download_single_video(url, title, download_dir)
+        video_path = download_single_video(url, title, download_dir, quality=quality)
         if not video_path:
             result['error'] = '视频下载失败'
             return result
@@ -359,7 +389,8 @@ def process_single_video(video_data: Dict, download_dir: Path, output_dir: Path,
     return result
 
 
-def process_fallback_videos(csv_path: str, model: str = 'flash-lite', limit: int = None) -> Dict:
+def process_fallback_videos(csv_path: str, model: str = 'flash-lite', limit: int = None,
+                            quality: str = 'best') -> Dict:
     """
     处理 CSV 中所有需要备选方案的视频
 
@@ -367,6 +398,7 @@ def process_fallback_videos(csv_path: str, model: str = 'flash-lite', limit: int
         csv_path: CSV 文件路径
         model: Gemini 模型
         limit: 限制处理数量（用于测试）
+        quality: 视频质量选项
 
     Returns:
         处理统计结果
@@ -424,7 +456,8 @@ def process_fallback_videos(csv_path: str, model: str = 'flash-lite', limit: int
         video_data['fallback_status'] = 'processing'
 
         # 处理视频
-        result = process_single_video(video_data, download_dir, output_dir, model, author_name=author_name)
+        result = process_single_video(video_data, download_dir, output_dir, model,
+                                      author_name=author_name, quality=quality)
 
         # 更新状态
         if result['success']:
@@ -476,6 +509,7 @@ def main():
   python video_fallback_processor.py --csv "bilibili_videos_output/作者名.csv"
   python video_fallback_processor.py --csv "bilibili_videos_output/作者名.csv" --model flash
   python video_fallback_processor.py --csv "bilibili_videos_output/作者名.csv" --limit 3
+  python video_fallback_processor.py --csv "bilibili_videos_output/作者名.csv" --quality 720p
         """
     )
 
@@ -483,11 +517,13 @@ def main():
     parser.add_argument('--model', '-m', choices=['flash', 'flash-lite', 'pro'],
                        default='flash-lite', help='Gemini 模型（默认: flash-lite）')
     parser.add_argument('--limit', '-l', type=int, help='限制处理数量（测试用）')
+    parser.add_argument('--quality', '-q', choices=['best', '1080p', '720p', '480p', '360p', 'audio_only'],
+                       default='best', help='视频质量（默认: best）')
 
     args = parser.parse_args()
 
     # 处理视频
-    result = process_fallback_videos(args.csv, args.model, args.limit)
+    result = process_fallback_videos(args.csv, args.model, args.limit, args.quality)
 
     if result['total'] == 0:
         return 0

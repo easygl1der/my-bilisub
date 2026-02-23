@@ -37,15 +37,20 @@ except ImportError:
 
 # B站 Cookie - 从 config/cookies.txt 统一读取
 try:
+    import sys
+    from pathlib import Path
+    # 添加 bots 目录到路径以导入 cookie_manager
+    sys.path.insert(0, str(Path(__file__).parent.parent / "bots"))
     from cookie_manager import get_cookie, check_cookie
     if check_cookie('bilibili'):
         BILI_COOKIE = get_cookie('bilibili', 'string')
     else:
         BILI_COOKIE = ""
         print("⚠️ B站 Cookie 未配置，请在 config/cookies.txt 中添加")
-except ImportError:
+except (ImportError, AttributeError) as e:
     # 如果 cookie_manager 不可用，使用默认值
     BILI_COOKIE = ""
+    print(f"⚠️ 无法加载 Cookie 管理器: {e}")
 
 # 输出目录
 OUTPUT_DIR = "bili_comments_output"

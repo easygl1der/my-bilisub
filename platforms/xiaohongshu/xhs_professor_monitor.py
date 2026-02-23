@@ -611,7 +611,7 @@ class ProfessorMonitor:
         # 初始化通知器
         if enable_notification:
             try:
-                from telegram_notifier import TelegramNotifier
+                from bots.telegram_notifier import TelegramNotifier
                 self.notifier = TelegramNotifier()
                 print("✅ Telegram 通知已启用")
             except Exception as e:

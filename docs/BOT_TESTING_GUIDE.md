@@ -234,7 +234,7 @@ python start_bot.py
 如果你只想验证Bot代码是否正确，不需要真正启动：
 
 ```bash
-python -c "from bot.multi_platform_bot import MultiPlatformBot; print('✅ Bot代码正常')"
+python -c "from bots.multi_platform_bot import MultiPlatformBot; print('✅ Bot代码正常')"
 ```
 
 如果输出 `✅ Bot代码正常`，说明代码没有问题。

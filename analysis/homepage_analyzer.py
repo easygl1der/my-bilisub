@@ -44,30 +44,60 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # 导入 Gemini 客户端
 try:
-    from analysis.gemini_subtitle_summary import GeminiClient, GEMINI_MODELS
+    from analysis.subtitle_analyzer import GeminiClient, GEMINI_MODELS
 except ImportError:
     print("❌ 无法导入 Gemini 客户端")
-    print("请确保 analysis/gemini_subtitle_summary.py 存在")
+    print("请确保 analysis/subtitle_analyzer.py 存在")
     sys.exit(1)
 
 
 # ==================== 数据读取 ====================
 
-def load_videos_from_csv(csv_path: str) -> List[Dict]:
-    """从 CSV 文件读取视频数据"""
+def load_videos_from_csv(csv_path: str, batch: int = None) -> List[Dict]:
+    """从 CSV 文件读取视频数据
+
+    Args:
+        csv_path: CSV文件路径
+        batch: 爬取批次号（可选），如果指定则只返回该批次的数据
+    """
     videos = []
 
     with open(csv_path, 'r', encoding='utf-8-sig') as f:
         reader = csv.DictReader(f)
         for row in reader:
-            videos.append({
-                'bvid': row.get('bvid', ''),
-                'title': row.get('title', ''),
-                'uploader': row.get('uploader', ''),
-                'uploader_url': row.get('uploader_url', ''),
-                'video_url': row.get('video_url', ''),
-                'timestamp': row.get('timestamp', ''),
-            })
+            # 跳过指定批次外的视频
+            if batch is not None:
+                row_batch = row.get('爬取批次', '')
+                if row_batch:
+                    try:
+                        if int(row_batch) != batch:
+                            continue
+                    except (ValueError, TypeError):
+                        pass
+
+            # 兼容B站和小红书两种格式
+            if 'bvid' in row:  # B站格式
+                videos.append({
+                    'bvid': row.get('bvid', ''),
+                    'title': row.get('title', ''),
+                    'uploader': row.get('uploader', ''),
+                    'uploader_url': row.get('uploader_url', ''),
+                    'video_url': row.get('video_url', ''),
+                    'timestamp': row.get('timestamp', ''),
+                    'batch': row.get('爬取批次', ''),
+                })
+            elif '笔记ID' in row:  # 小红书格式
+                videos.append({
+                    'bvid': row.get('笔记ID', ''),  # 用笔记ID作为唯一标识
+                    'title': row.get('标题', ''),
+                    'uploader': row.get('作者', ''),  # 作者作为UP主
+                    'uploader_url': '',  # 小红书可能没有
+                    'video_url': row.get('完整链接', '') or row.get('链接', ''),
+                    'timestamp': row.get('采集时间', ''),
+                    'batch': row.get('爬取批次', ''),
+                    'xsec_token': row.get('xsec_token', ''),
+                    'xsec_source': row.get('xsec_source', ''),
+                })
 
     return videos
 
@@ -80,8 +110,13 @@ def load_videos_from_json(json_path: str) -> List[Dict]:
     return data.get('视频列表', [])
 
 
-def load_videos(input_path: str) -> List[Dict]:
-    """根据文件扩展名读取视频数据"""
+def load_videos(input_path: str, batch: int = None) -> List[Dict]:
+    """根据文件扩展名读取视频数据
+
+    Args:
+        input_path: 输入文件路径
+        batch: 爬取批次号（可选），如果指定则只返回该批次的数据
+    """
     path = Path(input_path)
 
     if not path.exists():
@@ -89,8 +124,11 @@ def load_videos(input_path: str) -> List[Dict]:
         return []
 
     if path.suffix == '.csv':
-        return load_videos_from_csv(input_path)
+        return load_videos_from_csv(input_path, batch)
     elif path.suffix == '.json':
+        # JSON 文件暂不支持批次筛选
+        if batch is not None:
+            print("⚠️  JSON 文件不支持批次筛选，将返回所有数据")
         return load_videos_from_json(input_path)
     else:
         print(f"❌ 不支持的文件格式: {path.suffix}")
@@ -106,17 +144,26 @@ def calculate_statistics(videos: List[Dict]) -> Dict:
 
     # 统计 UP 主出现次数
     uploader_count = {}
+    batch_count = {}
     for video in videos:
         uploader = video.get('uploader', '未知UP主')
         uploader_count[uploader] = uploader_count.get(uploader, 0) + 1
 
+        # 统计批次分布
+        batch = video.get('batch', '')
+        if batch:
+            batch_count[batch] = batch_count.get(batch, 0) + 1
+
     # 排序
     top_uploaders = sorted(uploader_count.items(), key=lambda x: x[1], reverse=True)
+    sorted_batches = sorted(batch_count.items(),
+                            key=lambda x: int(x[0]) if str(x[0]).isdigit() else 0)
 
     return {
         '总视频数': len(videos),
         '唯一UP主数': len(uploader_count),
         '高频UP主': top_uploaders[:10],
+        '批次分布': dict(sorted_batches),
     }
 
 
@@ -247,10 +294,23 @@ def analyze_with_gemini(videos: List[Dict], model: str = 'flash-lite',
 # ==================== 报告生成 ====================
 
 def generate_report(videos: List[Dict], ai_report: str,
-                    stats: Dict, model: str) -> str:
+                    stats: Dict, model: str, batch: int = None) -> str:
     """生成完整分析报告"""
+    # 确定报告标题
+    title = "首页推荐分析报告"
+    platform = "B站"
+
+    # 检测数据来源
+    if videos and videos[0].get('xsec_token') or videos[0].get('xsec_source'):
+        platform = "小红书"
+
+    if batch:
+        title = f"{platform}首页推荐分析报告（第{batch}次爬取）"
+    else:
+        title = f"{platform}首页推荐分析报告"
+
     report_lines = [
-        "# B站首页推荐分析报告",
+        f"# {title}",
         "",
         f"**生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         f"**分析视频数**: {len(videos)}",
@@ -263,11 +323,24 @@ def generate_report(videos: List[Dict], ai_report: str,
         f"- **总视频数**: {stats.get('总视频数', 0)}",
         f"- **唯一UP主数**: {stats.get('唯一UP主数', 0)}",
         "",
+    ]
+
+    # 添加批次分布信息
+    if stats.get('批次分布') and len(stats['批次分布']) > 1:
+        report_lines.append("## 批次分布")
+        report_lines.append("")
+        report_lines.append("| 批次 | 数量 |")
+        report_lines.append("|------|------|")
+        for batch_num, count in stats['批次分布'].items():
+            report_lines.append(f"| 第{batch_num}次 | {count} |")
+        report_lines.append("")
+
+    report_lines.extend([
         "## 高频 UP 主 (前10)",
         "",
         "| UP主 | 出现次数 |",
         "|------|----------|",
-    ]
+    ])
 
     for uploader, count in stats.get('高频UP主', [])[:10]:
         report_lines.append(f"| {uploader} | {count} |")
@@ -314,14 +387,20 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 使用示例:
-    # 分析 CSV 文件
-    python homepage_analyzer.py --input output/homepage/homepage_videos_20250222.csv
+    # 分析 CSV 文件（全部数据）
+    python homepage_analyzer.py --input output/xiaohongshu_homepage/xiaohongshu_homepage_2026-02-23.csv
+
+    # 仅分析第1次爬取的数据
+    python homepage_analyzer.py --input output/xiaohongshu_homepage/xiaohongshu_homepage_2026-02-23.csv --batch 1
+
+    # 仅分析第2次爬取的数据
+    python homepage_analyzer.py --input output/xiaohongshu_homepage/xiaohongshu_homepage_2026-02-23.csv --batch 2
 
     # 指定模型
-    python homepage_analyzer.py --input output/homepage/homepage_videos_20250222.csv --model flash
+    python homepage_analyzer.py --input output/xiaohongshu_homepage/xiaohongshu_homepage_2026-02-23.csv --model flash
 
     # 指定输出文件
-    python homepage_analyzer.py --input output/homepage/homepage_videos_20250222.csv --output report.md
+    python homepage_analyzer.py --input output/xiaohongshu_homepage/xiaohongshu_homepage_2026-02-23.csv --output report.md
         """
     )
 
@@ -335,6 +414,8 @@ def main():
                         help='自定义分析提示词')
     parser.add_argument('--max-videos', type=int, default=100,
                         help='AI 分析的最大视频数（默认: 100）')
+    parser.add_argument('-b', '--batch', type=int,
+                        help='指定爬取批次（仅分析该批次的数据，不指定则分析全部）')
 
     args = parser.parse_args()
 
@@ -343,7 +424,10 @@ def main():
     print("📂 读取数据...")
     print("=" * 60)
 
-    videos = load_videos(args.input)
+    if args.batch:
+        print(f"📌 筛选批次: 第 {args.batch} 次爬取")
+
+    videos = load_videos(args.input, args.batch)
 
     if not videos:
         print("❌ 没有读取到视频数据")
@@ -357,6 +441,13 @@ def main():
     print(f"\n📊 基础统计:")
     print(f"  总视频数: {stats['总视频数']}")
     print(f"  唯一UP主数: {stats['唯一UP主数']}")
+
+    # 显示批次分布
+    if stats.get('批次分布'):
+        print(f"  批次分布:")
+        for batch, count in stats['批次分布'].items():
+            print(f"    第{batch}次: {count} 条")
+
     print(f"\n  高频 UP 主 (前5):")
     for uploader, count in stats['高频UP主'][:5]:
         print(f"    {uploader}: {count} 次")
@@ -380,7 +471,7 @@ def main():
     print(f"✅ 分析完成 (使用 tokens: {result.get('tokens', 0)})")
 
     # 生成报告
-    report = generate_report(videos, result['report'], stats, args.model)
+    report = generate_report(videos, result['report'], stats, args.model, args.batch)
 
     # 保存报告
     if args.output:
