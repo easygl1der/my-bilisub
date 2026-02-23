@@ -796,9 +796,10 @@ def get_gemini_api_key() -> str:
 class GeminiClient:
     """简化的 Gemini API 客户端"""
 
-    def __init__(self, model: str = 'flash-lite', api_key: str = None):
+    def __init__(self, model: str = 'flash', api_key: str = None):
         self.api_key = api_key or get_gemini_api_key()
-        self.model_name = f"gemini-2.5-{model}"
+        # 直接使用传入的模型名称，不做拼接
+        self.model_name = f"gemini-2.5-{model}" if model != 'flash' else 'gemini-2.5-flash'
 
         if not self.api_key:
             raise ValueError("未找到 Gemini API Key，请在 config_api.py 中配置或设置 GEMINI_API_KEY 环境变量")
