@@ -9,28 +9,16 @@ AI自动刷小红书推荐并总结
 4. AI生成分析报告
 
 使用示例:
-    # 默认配置（刷新3次，最多50个笔记）
     python ai_xiaohongshu_homepage.py
-
-    # 仅采集，生成CSV
-    python ai_xiaohongshu_homepage.py --mode scrape
-
-    # 采集+AI分析
-    python ai_xiaohongshu_homepage.py --mode full
-
-    # 自定义刷新次数和笔记数
-    python ai_xiaohongshu_homepage.py --refresh-count 5 --max-notes 100 --mode full
 """
 
 import argparse
 import asyncio
 import sys
 import csv
-import json
+import re
 from pathlib import Path
 from datetime import datetime
-from typing import List, Dict, Optional
-import re
 
 # Windows编码修复
 if sys.platform == 'win32':
@@ -39,22 +27,6 @@ if sys.platform == 'win32':
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
 from playwright.async_api import async_playwright
-import httpx
-from bs4 import BeautifulSoup
-import time
-
-# 延迟导入 Gemini API
-_gemini_available = False
-try:
-    from google import genai
-    _gemini_available = True
-except ImportError:
-    try:
-        import google.generativeai as genai
-        _gemini_available = True
-    except ImportError:
-        pass
-
 
 # ==================== 路径配置 ====================
 PROJECT_DIR = Path(__file__).parent
@@ -67,49 +39,28 @@ def read_xhs_cookie():
     cookie_file = PROJECT_DIR / "config" / "cookies.txt"
     if not cookie_file.exists():
         print("❌ Cookie文件不存在: config/cookies.txt")
-        print("💡 请先登录小红书并导出Cookie")
         return ""
 
     with open(cookie_file, 'r', encoding='utf-8') as f:
         content = f.read()
 
-    # 尝试多种格式
-    cookie = ""
-
-    # 方法1: 查找 xiaohongshu_full= 格式
+    # 查找 xiaohongshu_full= 格式
     match = re.search(r'xiaohongshu_full=([^\n]+)', content)
     if match:
-        cookie = match.group(1)
-        print("✅ 使用 xiaohongshu_full Cookie")
-        return cookie
+        return match.group(1)
 
-    # 方法2: 查找 [xiaohongshu] 部分
+    # 查找 [xiaohongshu] 部分
     xhs_section = re.search(r'\[xiaohongshu\](.*?)\[', content, re.DOTALL)
     if xhs_section:
         section = xhs_section.group(1)
-        # 提取所有 key=value 对
         cookies = []
         for line in section.split('\n'):
             line = line.strip()
             if '=' in line and not line.startswith('#'):
                 key, value = line.split('=', 1)
                 cookies.append(f"{key.strip()}={value.strip()}")
-        cookie = '; '.join(cookies)
-        if cookie:
-            print("✅ 使用 [xiaohongshu] 部分 Cookie")
-            return cookie
+        return '; '.join(cookies)
 
-    # 方法3: 直接查找关键Cookie
-    a1_match = re.search(r'a1=([^\s\n;]+)', content)
-    web_session_match = re.search(r'web_session=([^\s\n;]+)', content)
-    webid_match = re.search(r'webId=([^\s\n;]+)', content)
-
-    if a1_match and web_session_match and webid_match:
-        cookie = f"a1={a1_match.group(1)}; web_session={web_session_match.group(1)}; webId={webid_match.group(1)}"
-        print("✅ 手动提取关键Cookie")
-        return cookie
-
-    print("⚠️  Cookie文件中未找到有效的小红书Cookie")
     return ""
 
 
@@ -118,27 +69,14 @@ async def scrape_xiaohongshu_homepage(
     refresh_count: int = 3,
     max_notes: int = 50,
     cookie: str = ""
-) -> List[Dict]:
-    """
-    使用Playwright爬取小红书推荐页
-
-    Args:
-        refresh_count: 刷新次数
-        max_notes: 最多采集笔记数
-        cookie: 小红书Cookie
-
-    Returns:
-        笔记列表
-    """
+) -> list:
+    """使用Playwright爬取小红书推荐页"""
     notes_collected = []
-    seen_urls = set()  # 去重
+    seen_urls = set()
 
     async with async_playwright() as p:
-        # 启动浏览器（非无头模式）
-        browser = await p.chromium.launch(
-            headless=False,
-            args=['--disable-blink-features=AutomationControlled']
-        )
+        # 启动浏览器
+        browser = await p.chromium.launch(headless=False)
         context = await browser.new_context(
             user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         )
@@ -146,7 +84,6 @@ async def scrape_xiaohongshu_homepage(
         # 设置Cookie
         if cookie:
             try:
-                # 解析Cookie字符串并添加到context
                 cookies = []
                 for item in cookie.split(';'):
                     item = item.strip()
@@ -162,126 +99,135 @@ async def scrape_xiaohongshu_homepage(
                 print("✅ Cookie已设置")
             except Exception as e:
                 print(f"⚠️  Cookie设置失败: {e}")
-                print("💡 将使用无Cookie模式（可能需要手动登录）")
 
         page = await context.new_page()
 
         print(f"\n📡 访问小红书首页...")
         try:
-            # 使用更宽松的等待条件
             await page.goto('https://www.xiaohongshu.com/', wait_until='domcontentloaded', timeout=60000)
-            await asyncio.sleep(5)  # 等待页面完全加载
+            await asyncio.sleep(5)
         except Exception as e:
-            print(f"⚠️  页面加载超时或失败: {e}")
-            print("💡 浏览器窗口已打开，你可以手动操作")
+            print(f"⚠️  页面加载问题: {e}")
+            print("💡 浏览器已打开，请检查网络连接")
 
-        # 检查是否需要登录
-        try:
-            # 等待页面内容加载
-            await asyncio.sleep(2)
-
-            # 检查是否有登录按钮
-            page_content = await page.content()
-            if '登录' in page_content and '注册' in page_content:
-                print("\n⚠️  检测到未登录状态")
-                print("💡 请在浏览器中手动登录小红书")
-                print("⏳ 等待60秒...")
-                print("💡 登录完成后，脚本会自动继续")
-                await asyncio.sleep(60)
-                print("✅ 继续执行...")
-            else:
-                print("✅ 登录状态正常")
-        except:
-            pass
+        # 检查登录状态
+        page_content = await page.content()
+        if '登录' in page_content and '注册' in page_content:
+            print("\n⚠️  检测到未登录状态")
+            print("💡 请在浏览器中手动登录")
+            print("⏳ 等待90秒...登录完成后会自动继续")
+            await asyncio.sleep(90)
+            print("✅ 继续执行...")
 
         print(f"\n🔄 开始采集推荐内容（刷新{refresh_count}次）...")
 
         for i in range(refresh_count):
             print(f"\n  刷新 {i+1}/{refresh_count}")
 
-            # 滚动页面加载更多内容
-            for scroll in range(5):
+            # 滚动加载
+            for scroll in range(10):
                 await page.evaluate('window.scrollBy(0, window.innerHeight)')
                 await asyncio.sleep(1)
 
-            # 获取页面内容
-            content = await page.content()
-            soup = BeautifulSoup(content, 'html.parser')
+            # 等待内容加载
+            await asyncio.sleep(2)
 
-            # 查找笔记元素
-            # 小红书的笔记通常在特定的div中
-            note_items = soup.find_all('section')  # 小红书常用的标签
+            # 获取所有链接和信息
+            try:
+                notes_data = await page.evaluate('''
+                    () => {
+                        const notes = [];
+                        const seen = new Set();
 
-            for item in note_items:
-                try:
-                    # 提取笔记ID和链接
-                    link_elem = item.find('a', href=re.compile(r'/explore/'))
-                    if not link_elem:
-                        continue
+                        // 查找所有笔记卡片
+                        const cards = document.querySelectorAll('section, section > div');
 
-                    note_url = link_elem.get('href', '')
-                    if not note_url:
-                        continue
+                        cards.forEach(card => {
+                            const link = card.querySelector('a[href*="/explore/"]');
+                            if (!link) return;
 
-                    # 补全URL
-                    if note_url.startswith('//'):
-                        note_url = 'https:' + note_url
-                    elif note_url.startswith('/'):
-                        note_url = 'https://www.xiaohongshu.com' + note_url
+                            const url = link.href;
+                            const idMatch = url.match(/\\/explore\\/([a-f0-9]+)/);
+                            if (!idMatch) return;
+                            const noteId = idMatch[1];
 
-                    # 提取笔记ID
-                    note_id_match = re.search(r'/explore/([a-f0-9]+)', note_url)
-                    if not note_id_match:
-                        continue
-                    note_id = note_id_match.group(1)
+                            if (seen.has(noteId)) return;
+                            seen.add(noteId);
+
+                            // 尝试获取标题
+                            let title = "无标题";
+                            const titleElems = card.querySelectorAll('span, div[class*="title"]');
+                            for (const elem of titleElems) {
+                                const text = elem.textContent?.trim();
+                                if (text && text.length > 3 && text.length < 100) {
+                                    title = text.substring(0, 50);
+                                    break;
+                                }
+                            }
+
+                            // 尝试获取作者
+                            let author = "未知作者";
+                            const authorElems = card.querySelectorAll('span[class*="user"], span[class*="name"]');
+                            for (const elem of authorElems) {
+                                const text = elem.textContent?.trim();
+                                if (text && text.length > 1 && text.length < 30) {
+                                    author = text;
+                                    break;
+                                }
+                            }
+
+                            // 判断类型
+                            const hasVideo = card.querySelector('video');
+                            const type = hasVideo ? 'video' : 'image';
+
+                            notes.push({
+                                url: url,
+                                noteId: noteId,
+                                title: title,
+                                author: author,
+                                type: type
+                            });
+                        });
+
+                        return notes;
+                    }
+                ''')
+
+                print(f"    找到 {len(notes_data)} 个笔记")
+
+                for note in notes_data:
+                    note_id = note['noteId']
 
                     # 去重
                     if note_id in seen_urls:
                         continue
                     seen_urls.add(note_id)
 
-                    # 提取标题/描述
-                    title_elem = link_elem.find('span', class_=re.compile(r'title'))
-                    title = title_elem.get_text(strip=True) if title_elem else "无标题"
-
-                    # 提取作者信息
-                    author_elem = item.find('span', class_=re.compile(r'user.*name|nickname'))
-                    author = author_elem.get_text(strip=True) if author_elem else "未知作者"
-
-                    # 提取点赞数
-                    like_elem = item.find('span', class_=re.compile(r'like|count'))
-                    likes = like_elem.get_text(strip=True) if like_elem else "0"
-
-                    # 判断类型（视频/图文）
-                    video_elem = item.find('video')
-                    note_type = 'video' if video_elem else 'image'
-
                     note_data = {
                         '序号': len(notes_collected) + 1,
-                        '标题': title,
-                        '链接': note_url,
+                        '标题': note['title'],
+                        '链接': note['url'],
                         '笔记ID': note_id,
-                        '作者': author,
-                        '点赞数': likes,
-                        '类型': note_type,
+                        '作者': note['author'],
+                        '点赞数': '0',
+                        '类型': note['type'],
                         '采集时间': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                     }
 
                     notes_collected.append(note_data)
-                    print(f"    ✓ [{len(notes_collected)}] {note_type} - {title[:30]}...")
+                    print(f"    ✓ [{len(notes_collected)}] {note['type']} - {note['title']}")
 
-                    # 检查是否达到上限
                     if len(notes_collected) >= max_notes:
                         break
 
-                except Exception as e:
-                    # 单个笔记解析失败不影响整体
-                    continue
+            except Exception as e:
+                print(f"    ⚠️  解析出错: {e}")
 
-            # 刷新页面
+            # 刷新
             if i < refresh_count - 1:
-                await page.reload(wait_until='networkidle')
-                await asyncio.sleep(2)
+                print("    刷新页面...")
+                await page.reload(wait_until='domcontentloaded', timeout=60000)
+                await asyncio.sleep(3)
 
         await browser.close()
 
@@ -290,19 +236,9 @@ async def scrape_xiaohongshu_homepage(
 
 
 # ==================== CSV导出 ====================
-def export_to_csv(notes: List[Dict], output_path: Path):
+def export_to_csv(notes, output_path):
     """导出笔记到CSV"""
-
-    csv_columns = [
-        '序号',
-        '标题',
-        '链接',
-        '笔记ID',
-        '作者',
-        '点赞数',
-        '类型',
-        '采集时间'
-    ]
+    csv_columns = ['序号', '标题', '链接', '笔记ID', '作者', '点赞数', '类型', '采集时间']
 
     with open(output_path, 'w', encoding='utf-8-sig', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=csv_columns)
@@ -310,86 +246,6 @@ def export_to_csv(notes: List[Dict], output_path: Path):
         writer.writerows(notes)
 
     print(f"📁 CSV已保存: {output_path}")
-
-
-# ==================== AI分析 ====================
-def generate_ai_summary(notes: List[Dict], model: str = 'flash-lite') -> Optional[str]:
-    """使用Gemini生成AI摘要"""
-
-    if not _gemini_available:
-        print("⚠️  Gemini API未安装，跳过AI分析")
-        return None
-
-    # 配置API
-    api_key = os.environ.get('GEMINI_API_KEY')
-    if not api_key:
-        print("⚠️  未设置GEMINI_API_KEY环境变量，跳过AI分析")
-        return None
-
-    genai.configure(api_key=api_key)
-    model_obj = genai.GenerativeModel(model)
-
-    # 准备输入数据
-    notes_text = "\n\n".join([
-        f"{i+1}. {note['标题']}\n"
-        f"   作者: {note['作者']}\n"
-        f"   类型: {note['类型']}\n"
-        f"   点赞: {note['点赞数']}\n"
-        f"   链接: {note['链接']}"
-        for i, note in enumerate(notes[:20])  # 最多分析20个
-    ])
-
-    prompt = f"""你是一个专业的社交媒体内容分析师。请分析以下小红书推荐内容，生成一份趋势报告。
-
-小红书推荐内容：
-{notes_text}
-
-请生成以下格式的报告：
-
-## 📊 小红书推荐趋势分析
-
-### 🎯 内容概览
-- 采集笔记数：{len(notes)}篇
-- 视频占比：XX%
-- 图文占比：XX%
-- 平均点赞数：XX
-
-### 🔥 热门主题（Top 5）
-提取最受欢迎的5个主题/话题
-
-### 👥 热门作者（Top 5）
-列举发布最多内容的5个作者
-
-### 📈 趋势分析
-分析当前小红书推荐的内容趋势，包括：
-- 热门话题
-- 内容偏好
-- 受欢迎的内容类型
-
-### 💎 值得关注的笔记
-推荐3-5个值得深入阅读的笔记（附链接）
-
-### 📝 内容质量评估
-- 内容多样性评分：1-5星
-- 互动热度：高/中/低
-- 推荐度：1-5星
-
-请确保报告结构完整，每个部分都要有实质内容。"""
-
-    try:
-        print("\n🤖 正在使用AI分析...")
-        response = model_obj.generate_content(prompt)
-
-        if response.text:
-            print("✅ AI分析完成！")
-            return response.text
-        else:
-            print("❌ AI分析失败：无响应")
-            return None
-
-    except Exception as e:
-        print(f"❌ AI分析出错: {e}")
-        return None
 
 
 # ==================== 主程序 ====================
@@ -400,11 +256,9 @@ async def main():
                        help='刷新次数（默认: 3）')
     parser.add_argument('--max-notes', type=int, default=50,
                        help='最多采集笔记数（默认: 50）')
-    parser.add_argument('--mode', type=str, default='full',
+    parser.add_argument('--mode', type=str, default='scrape',
                        choices=['scrape', 'full'],
                        help='模式: scrape=仅采集, full=采集+AI分析')
-    parser.add_argument('--model', type=str, default='flash-lite',
-                       help='Gemini模型（默认: flash-lite）')
 
     args = parser.parse_args()
 
@@ -419,9 +273,7 @@ async def main():
     # 读取Cookie
     cookie = read_xhs_cookie()
     if not cookie:
-        print("\n❌ 未找到有效的小红书Cookie")
-        print("💡 请先在浏览器中登录小红书，然后导出Cookie到 config/cookies.txt")
-        return
+        print("\n⚠️  未找到Cookie，将使用无Cookie模式（需要手动登录）")
 
     # 采集数据
     notes = await scrape_xiaohongshu_homepage(
@@ -439,15 +291,9 @@ async def main():
     csv_path = OUTPUT_DIR / f"xiaohongshu_homepage_{date_str}.csv"
     export_to_csv(notes, csv_path)
 
-    # AI分析
+    # AI分析（待实现）
     if args.mode == 'full':
-        summary = generate_ai_summary(notes, args.model)
-        if summary:
-            # 保存摘要
-            summary_path = OUTPUT_DIR / f"xiaohongshu_homepage_{date_str}_AI总结.md"
-            with open(summary_path, 'w', encoding='utf-8') as f:
-                f.write(summary)
-            print(f"📁 AI总结已保存: {summary_path}")
+        print("\n⚠️  AI分析功能待实现")
 
     print(f"\n{'='*70}")
     print(f"  ✅ 完成！")
