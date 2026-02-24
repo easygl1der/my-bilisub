@@ -151,17 +151,16 @@ async def scrape_xiaohongshu_homepage(
                         const cards = document.querySelectorAll('section, article, [class*="note"], [class*="card"], div[class*="item"]');
 
                         cards.forEach(card => {
-                            // 查找链接
-                            const link = card.querySelector('a[href*="/explore/"], a[href*="/discovery/item/"]');
+                            // 直接查找带 xsec_token 的链接
+                            const link = card.querySelector('a[href*="xsec_token"]');
                             if (!link) return;
 
                             const url = link.href;
 
-                            // 新增：尝试获取 xsec_token
+                            // 从 URL 中提取 xsec_token 和 xsec_source
                             let xsecToken = '';
                             let xsecSource = 'pc_homepage';  // 默认来源为首页
 
-                            // 方法1: 从 URL 中提取 xsec_token
                             try {
                                 const urlParams = new URLSearchParams(url.split('?')[1]);
                                 xsecToken = urlParams.get('xsec_token') || '';
@@ -172,37 +171,13 @@ async def scrape_xiaohongshu_homepage(
                                 // URL 解析失败，继续使用空值
                             }
 
-                            // 方法2: 如果 URL 中没有 xsec_token，尝试从卡片的数据属性中查找
-                            if (!xsecToken) {
-                                try {
-                                    // 尝试查找各种可能包含 xsec_token 的元素
-                                    const tokenSelectors = [
-                                        '[data-xsec-token]',
-                                        '[data-xSecToken]',
-                                        '[data-x-sec-token]'
-                                    ];
-                                    for (const selector of tokenSelectors) {
-                                        const tokenElem = card.querySelector(selector);
-                                        if (tokenElem) {
-                                            xsecToken = tokenElem.getAttribute(selector.replace(/\[|\]/g, '').split('=')[1]) || '';
-                                            if (xsecToken) break;
-                                        }
-                                    }
-                                } catch (e) {
-                                    // 查找失败，继续使用空值
-                                }
-                            }
-
                             // 提取笔记ID
                             let noteId = "";
                             if (url.includes('/explore/')) {
-                                const idMatch = url.match(/\\/explore\\/([a-f0-9]+)/);
+                                const idMatch = url.match(/\\/explore\\/([a-f0-9]{24})/);
                                 if (idMatch) noteId = idMatch[1];
                             } else if (url.includes('/discovery/item/')) {
-                                const idMatch = url.match(/\\/discovery\\/item\\/([a-f0-9]+)/);
-                                if (idMatch) noteId = idMatch[1];
-                            } else {
-                                const idMatch = url.match(/([a-f0-9]{32})/);
+                                const idMatch = url.match(/\\/discovery\\/item\\/([a-f0-9]{24})/);
                                 if (idMatch) noteId = idMatch[1];
                             }
 
@@ -422,7 +397,7 @@ def generate_ai_report(notes, output_dir):
         print("💡 安装命令: pip install google-generativeai")
         return
 
-    # 配置API
+    # 配置API（修正拼写：GEMINI -> GEMINI）
     api_key = os.environ.get('GEMINI_API_KEY', '')
     config_file = PROJECT_DIR / "config" / "bot_config.json"
     if config_file.exists():
@@ -570,6 +545,15 @@ async def main():
 
     # AI分析
     if args.mode == 'full':
+        print(f"\n📊 准备进行 AI 分析，笔记数量: {len(notes)}")
+        # 添加调试输出
+        if notes:
+            print(f"📋 第一条笔记数据示例:")
+            first_note = notes[0]
+            for key, value in first_note.items():
+                print(f"   {key}: {value}")
+        else:
+            print("⚠️  notes 为空，无法进行 AI 分析")
         generate_ai_report(notes, OUTPUT_DIR)
 
     print(f"\n{'='*70}")
