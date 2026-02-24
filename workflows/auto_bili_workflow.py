@@ -52,7 +52,7 @@ FALLBACK_PROCESSOR_SCRIPT = SCRIPT_DIR / "utils" / "video_fallback_processor.py"
 
 # 输出路径 - 保存到输出目录
 MEDIA_CRAWLER_OUTPUT = SCRIPT_DIR / "bilibili_videos_output"
-SUBTITLE_OUTPUT = SCRIPT_DIR / "output" / "bilibili_subtitles"
+SUBTITLE_OUTPUT = SCRIPT_DIR / "output" / "subtitles"
 
 
 # ==================== 步骤1: 抓取视频列表 ====================

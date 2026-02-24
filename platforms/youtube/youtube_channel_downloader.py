@@ -62,6 +62,16 @@ if sys.platform == 'win32':
 
 YOUTUBE_API_URL = "https://www.googleapis.com/youtube/v3"
 
+# 导入 API 配置
+try:
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    from config.config_api import API_CONFIG
+    DEFAULT_API_KEY = API_CONFIG.get('youtube', {}).get('api_key', '')
+except ImportError:
+    DEFAULT_API_KEY = ''
+
 
 # ==================== 工具函数 ====================
 
@@ -675,9 +685,10 @@ def main():
     print(f"📋 类型: {type_names.get(link_type, '未知')}")
 
     # 提取视频
-    if args.api_key:
+    api_key = args.api_key or DEFAULT_API_KEY
+    if api_key:
         print(f"🔑 使用 API 模式")
-        channel_info = extract_channel_videos_with_api(args.channel, args.api_key, args.limit)
+        channel_info = extract_channel_videos_with_api(args.channel, api_key, args.limit)
     else:
         print(f"📡 使用 yt-dlp 模式（可能不稳定）")
         channel_info = extract_channel_videos_ytdlp(args.channel, args.limit)

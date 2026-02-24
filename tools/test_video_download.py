@@ -22,7 +22,9 @@ import os
 import sys
 import time
 import argparse
+import requests
 from pathlib import Path
+from typing import Optional
 
 import yt_dlp
 
@@ -75,6 +77,29 @@ def detect_platform(url: str) -> str:
     elif 'youtube.com' in url or 'youtu.be' in url:
         return 'youtube'
     return 'unknown'
+
+
+def extract_xhs_note_url(url: str) -> Optional[str]:
+    """
+    从小红书链接中提取实际的笔记链接
+
+    如果是用户主页链接，返回第一个笔记链接
+    如果是笔记链接，直接返回
+    """
+    import re
+
+    # 检查是否是笔记链接（包含 explore 或直接笔记ID）
+    if '/explore/' in url or ('user/profile' in url and re.search(r'/\d{19,20}\?xsec_token', url)):
+        # 这是笔记链接，直接返回
+        return url
+
+    # 如果是纯用户主页（不包含笔记ID）
+    if '/user/profile/' in url and 'xsec_token' not in url:
+        print("❌ 需要完整的用户主页链接（包含 xsec_token）")
+        return None
+
+    # 如果是用户主页 + 笔记ID 的格式，但可能不是视频笔记
+    return url
 
 
 def get_bili_cookie() -> str:

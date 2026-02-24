@@ -82,7 +82,7 @@ def format_srt(segments: List[Dict]) -> str:
 def load_api_config():
     """加载API配置"""
     try:
-        from config_api import API_CONFIG
+        from config.config_api import API_CONFIG
         return API_CONFIG['zhipu']
     except ImportError:
         print("❌ 未找到 config_api.py 文件")

@@ -1,10 +1,106 @@
 # 开发工作日志
 
-生成时间: 2026-02-24 16:45:25
+生成时间: 2026-02-24 19:50:37
 
 ---
 
 ## 2026-02-24
+
+### [fix] 确认 yt-dlp 小红书视频下载功能正常
+
+- **时间**: 19:50:22
+- **类型**: Bug修复
+- **ID**: 20260224195022
+- **涉及文件**: tools/test_video_download.py
+- **标签**: 小红书,视频下载,yt-dlp
+- **详情**: 之前测试失败是因为链接失效，工具本身正常工作。
+
+测试成功记录：
+- 笔记ID: 699d2373000000001a01df2a
+- 标题: 让自己沟通不吃亏的心理学武器：锚定效应
+- 时长: 1分57秒
+- 大小: 29.6MB
+- 下载耗时: 63.2秒
+
+结论：
+- test_video_download.py 工具正常
+- 支持的平台：B站、小红书、YouTube
+- 之前失败的记录是因为链接已失效（页面显示'你访问的页面不见了'），而不是工具问题
+
+---
+
+### [fix] 排查并诊断小红书链接失效问题
+
+- **时间**: 17:20:54
+- **类型**: Bug修复
+- **ID**: 20260224172054
+- **涉及文件**: tools/check_xhs_note.py
+- **标签**: 小红书,链接验证,问题排查
+- **详情**: 问题现象：yt-dlp 下载小红书视频失败，警告 'Extractor failed to obtain title'。
+
+排查过程：
+1. 尝试使用 MediaCrawler 获取笔记，遇到环境依赖错误（pydantic._internal._signature 和 pyexpat DLL加载失败）
+2. 创建笔记类型检查工具 check_xhs_note.py，通过 HTTP 请求分析页面内容
+
+根本原因：
+- 页面标题显示 '你访问的页面不见了...'
+- 图片数量为 0
+- 笔记类型字段显示 'default'
+
+结论：
+- 小红书链接 696425c4000000002203 已失效/过期
+- 笔记可能已被删除或需要登录才能查看
+- 之前成功下载的链接 698352120000000021028ff8 是有效的
+
+解决方案：
+- 重新在小红书 App 中分享并复制完整链接（包含 xsec_token）
+- 使用 check_xhs_note.py 验证链接有效性后再下载
+
+---
+
+### [feature] 创建批量SRT字幕生成流程 batch_subtitle_fetch.py
+
+- **时间**: 17:12:10
+- **类型**: 新功能
+- **ID**: 20260224171210
+- **涉及文件**: workflows/batch_subtitle_fetch.py
+- **标签**: B站,字幕生成,SRT格式,bilibili_api
+- **详情**: 从CSV文件读取视频列表，对每个视频调用Bilibili API获取字幕，将字幕数据转换为SRT格式并保存到output/subtitles/{UP主名称}/目录。同时生成汇总MD文件包含表格信息和统计数据。\n\n关键代码位置：\n- SRT生成：batch_subtitle_fetch.py:96-154\n- MD汇总：batch_subtitle_fetch.py:178-237\n\n完美实现。
+
+---
+
+### [feature] 完善B站评论爬取工具 fetch_bili_comments.py
+
+- **时间**: 17:11:25
+- **类型**: 新功能
+- **ID**: 20260224171125
+- **涉及文件**: platforms/bilibili/fetch_bili_comments.py
+- **标签**: B站,评论爬取,嵌套结构,JSON/CSV/MD
+- **详情**: 使用B站API获取视频评论，支持BV号和AV号，保存为CSV/JSON/Markdown格式，使用Cookie认证。\n\n新增功能：\n1. 嵌套评论结构 - 支持递归获取子评论\n2. 每条评论包含 replies 数组\n3. 记录层级关系（level 字段）\n\n修改总结：\n- 三种输出格式\n  # JSON格式（嵌套结构，推荐）\n  # Markdown格式（易读，适合阅读）\n  # CSV格式（扁平化，便于数据分析）\n\n增强字段：comment_id, content, likes, author, author_mid, author_avatar, create_time, reply_to, level, platform, replies。\n\n测试运行结果：\n\n完美实现。
+
+---
+
+### [feature] 创建B站用户视频自动化工作流 auto_bili_workflow.py
+
+- **时间**: 17:08:54
+- **类型**: 新功能
+- **ID**: 20260224170854
+- **涉及文件**: workflows/auto_bili_workflow.py
+- **标签**: B站,工作流,Gemini,AI摘要,字幕提取
+- **详情**: B站用户视频自动化工作流，抓取用户视频列表，批量提取字幕，使用Gemini生成AI摘要报告，支持增量模式（跳过已处理视频），备选方案（无字幕视频可下载并用Gemini分析）。\n\n测试运行结果：\n\n完美实现。
+
+---
+
+### [feature] 创建视频下载测试工具 test_video_download.py
+
+- **时间**: 16:57:01
+- **类型**: 新功能
+- **ID**: 20260224165701
+- **涉及文件**: tools/test_video_download.py
+- **标签**: 视频下载,测试,yt-dlp
+- **详情**: 使用yt-dlp下载视频，支持B站、小红书、YouTube，显示下载进度，支持仅检查视频信息。\n\n测试运行结果：\n\n小红书视频测试失败：\n\n测试结果：B站视频下载成功，小红书视频下载失败（Unsupported URL）。
+
+---
 
 ### [feature] 完善B站首页刷取和AI总结功能 ai_bilibili_homepage.py
 

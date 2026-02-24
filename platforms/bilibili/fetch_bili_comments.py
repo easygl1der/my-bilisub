@@ -41,32 +41,42 @@ try:
     import sys
     from pathlib import Path
 
-    # 添加 platforms/bilibili 目录到路径以导入 cookie_manager
-    sys.path.insert(0, str(Path(__file__).parent))
-    # 添加 config 目录到路径
-    sys.path.insert(0, str(Path(__file__).parent.parent / "config"))
+    # 读取Cookie文件 - 从脚本路径往上两级到根目录
+    script_dir = Path(__file__).resolve().parent
+    # script_dir 是 platforms/bilibili
+    # 往上两级：platforms/bilibili -> platforms -> 根目录
+    root_dir = script_dir.parent.parent
+    cookie_file = root_dir / "config" / "cookies.txt"
 
-    # 简化Cookie读取逻辑
-    cookie_file = Path(__file__).parent.parent / "config" / "cookies.txt"
     if cookie_file.exists():
         with open(cookie_file, 'r', encoding='utf-8') as f:
             content = f.read()
-        # 查找bili相关的Cookie
+
+        # 查找 [bilibili] 部分
+        in_bilibili_section = False
         for line in content.split('\n'):
-            if line.startswith('[bilibili]') or 'bilibili' in line.lower():
-                parts = line.split('=', 1)
-                if len(parts) == 2:
-                    BILI_COOKIE += parts[0].strip() + '=' + parts[1].strip() + '; '
-                # 如果找到bili部分，开始提取
-                if line.strip() == '[bilibili]':
-                    continue
-                break
+            line = line.strip()
+
+            # 进入bilibili部分
+            if line == '[bilibili]':
+                in_bilibili_section = True
+                continue
+            # 退出bilibili部分
+            elif line.startswith('['):
+                in_bilibili_section = False
+                continue
+            # 收集Cookie
+            elif in_bilibili_section and '=' in line and not line.startswith('#'):
+                key, value = line.split('=', 1)
+                BILI_COOKIE += f"{key.strip()}={value.strip()}; "
+
+        # 移除最后的分号和空格
         BILI_COOKIE = BILI_COOKIE.rstrip('; ')
 
-    if not BILI_COOKIE:
-        print("⚠️ B站 Cookie 未配置，请在 config/cookies.txt 中添加 [bilibili] 部分")
+    if BILI_COOKIE:
+        print(f"✅ 已加载 B站 Cookie (长度: {len(BILI_COOKIE)} 字符)")
     else:
-        print("✅ 已加载 B站 Cookie")
+        print("⚠️ B站 Cookie 未配置，请在 config/cookies.txt 中添加 [bilibili] 部分")
 
 except Exception as e:
     print(f"⚠️ 无法读取 Cookie 文件: {e}")
@@ -234,30 +244,58 @@ class BiliCommentClient:
             print(f"   ⚠️  请求异常: {e}")
             return []
 
+    def _parse_comment(self, reply: Dict, level: int = 0) -> Dict:
+        """解析单条评论（递归处理回复）"""
+        try:
+            member = reply.get("member", {})
+            if member is None:
+                member = {}
+            content = reply.get("content", {})
+            if content is None:
+                content = {}
+            like_count = reply.get("like", 0)
+
+            # 处理回复关系
+            parent_rpid = reply.get("parent", 0)
+            reply_to = None
+            if parent_rpid and parent_rpid != 0:
+                # 获取被回复者的用户名（需要在上层维护一个映射）
+                reply_to = parent_rpid
+
+            # 基础评论数据
+            comment_data = {
+                "comment_id": str(reply.get("rpid", "")),
+                "content": content.get("message", ""),
+                "likes": like_count,
+                "author": member.get("uname", ""),
+                "author_mid": str(member.get("mid", "")),
+                "author_avatar": member.get("face", ""),
+                "create_time": reply.get("ctime", 0),
+                "reply_to": reply_to,
+                "level": level,
+                "platform": "bilibili",
+                "replies": []
+            }
+
+            # 递归处理子评论
+            sub_replies = reply.get("replies", [])
+            if sub_replies:
+                for sub_reply in sub_replies:
+                    sub_data = self._parse_comment(sub_reply, level + 1)
+                    comment_data["replies"].append(sub_data)
+
+            return comment_data
+        except Exception as e:
+            return None
+
     def _parse_comments(self, replies: List[Dict]) -> List[Dict]:
-        """解析评论数据"""
+        """解析评论数据（支持嵌套结构）"""
         parsed = []
 
         for reply in replies:
-            try:
-                member = reply.get("member", {})
-                if member is None:
-                    member = {}
-                content = reply.get("content", {})
-                if content is None:
-                    content = {}
-                like_count = reply.get("like", 0)
-
-                parsed.append({
-                    "comment_id": reply.get("rpid", ""),
-                    "content": content.get("message", ""),
-                    "likes": like_count,
-                    "author": member.get("uname", ""),
-                    "create_time": reply.get("ctime", 0),
-                    "platform": "bilibili"
-                })
-            except Exception as e:
-                continue
+            comment = self._parse_comment(reply)
+            if comment:
+                parsed.append(comment)
 
         return parsed
 
@@ -317,30 +355,121 @@ def extract_video_id(url: str) -> Optional[str]:
 # 保存结果
 # ============================================================================
 
-def save_comments(comments: List[Dict], video_id: str) -> str:
-    """保存评论到 CSV"""
+def save_comments(comments: List[Dict], video_id: str, output_format: str = "json") -> str:
+    """保存评论到 JSON 或 Markdown（支持嵌套结构）"""
     if not comments:
         return None
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    csv_file = os.path.join(OUTPUT_DIR, f"bili_comments_{video_id}_{timestamp}.csv")
 
-    import csv
-    with open(csv_file, 'w', encoding='utf-8-sig', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=['comment_id', 'author', 'content', 'likes', 'create_time', 'platform'])
-        writer.writeheader()
-        writer.writerows(comments)
+    # 统计总评论数（包括子评论）
+    def count_all_comments(comment_list):
+        """递归统计所有评论数"""
+        count = 0
+        for comment in comment_list:
+            count += 1
+            count += count_all_comments(comment.get("replies", []))
+        return count
 
-    return csv_file
+    total_count = count_all_comments(comments)
+
+    if output_format == "json":
+        # JSON 格式
+        json_file = os.path.join(OUTPUT_DIR, f"bili_comments_{video_id}_{timestamp}.json")
+        with open(json_file, 'w', encoding='utf-8') as f:
+            json.dump({
+                "video_id": video_id,
+                "total_comments": total_count,
+                "fetch_time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                "comments": comments
+            }, f, ensure_ascii=False, indent=2)
+
+        print(f"💾 JSON已保存: {json_file}")
+        return json_file
+
+    elif output_format == "md":
+        # Markdown 格式
+        md_file = os.path.join(OUTPUT_DIR, f"bili_comments_{video_id}_{timestamp}.md")
+
+        with open(md_file, 'w', encoding='utf-8') as f:
+            f.write(f"# B站视频评论\n\n")
+            f.write(f"**视频ID**: {video_id}\n\n")
+            f.write(f"**评论总数**: {total_count}\n")
+            f.write(f"**爬取时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+            f.write("---\n\n")
+
+            # 递归写入评论
+            def write_comment(comment: Dict, level: int = 0):
+                """递归写入单条评论"""
+                indent = "  " * level
+                prefix = "├─ " if level > 0 else ""
+
+                # 时间格式化
+                create_time = comment.get("create_time", 0)
+                time_str = datetime.fromtimestamp(create_time).strftime('%Y-%m-%d %H:%M:%S') if create_time else "未知"
+
+                f.write(f"{indent}{prefix}**{comment['author']}**\n")
+                f.write(f"{indent}    ID: `{comment['comment_id']}`\n")
+                f.write(f"{indent}    时间: {time_str}\n")
+                f.write(f"{indent}    点赞: {comment['likes']}\n")
+                f.write(f"{indent}    内容: {comment['content']}\n")
+
+                # 递归写入子评论
+                for reply in comment.get("replies", []):
+                    write_comment(reply, level + 1)
+
+            for comment in comments:
+                write_comment(comment)
+                f.write("\n")
+
+        print(f"💾 Markdown已保存: {md_file}")
+        return md_file
+
+    else:
+        # 默认 CSV（扁平化结构）
+        csv_file = os.path.join(OUTPUT_DIR, f"bili_comments_{video_id}_{timestamp}.csv")
+        import csv
+
+        # 扁平化评论数据
+        def flatten_comments(comment_list, flat_list=None):
+            """递归扁平化评论列表"""
+            if flat_list is None:
+                flat_list = []
+
+            for comment in comment_list:
+                flat_list.append({
+                    "comment_id": comment.get("comment_id", ""),
+                    "author": comment.get("author", ""),
+                    "content": comment.get("content", ""),
+                    "likes": comment.get("likes", 0),
+                    "create_time": comment.get("create_time", 0),
+                    "platform": comment.get("platform", ""),
+                    "level": comment.get("level", 0)
+                })
+                # 递归处理子评论
+                if comment.get("replies"):
+                    flatten_comments(comment["replies"], flat_list)
+
+            return flat_list
+
+        flat_comments = flatten_comments(comments)
+
+        with open(csv_file, 'w', encoding='utf-8-sig', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=['comment_id', 'author', 'content', 'likes', 'create_time', 'platform', 'level'])
+            writer.writeheader()
+            writer.writerows(flat_comments)
+
+        print(f"💾 CSV已保存: {csv_file}")
+        return csv_file
 
 
 # ============================================================================
 # 主程序
 # ============================================================================
 
-def main(url: str = None, count: int = None):
+def main(url: str = None, count: int = None, output_format: str = "json"):
     """主程序"""
     print("\n" + "="*70)
     print("B站评论爬取工具")
@@ -384,37 +513,56 @@ def main(url: str = None, count: int = None):
         print("\n❌ 未获取到评论")
         return
 
-    print(f"\n✅ 成功获取 {len(comments)} 条评论")
+    print(f"\n✅ 成功获取 {len(comments)} 条主评论（包含子评论）")
 
     # 保存结果
-    csv_file = save_comments(comments, video_id.replace('/', '_'))
-    print(f"💾 已保存到: {csv_file}")
+    output_file = save_comments(comments, video_id.replace('/', '_'), output_format)
 
-    # 显示预览
+    # 显示预览（简化版）
     print("\n📝 评论预览:")
-    for i, comment in enumerate(comments[:5], 1):
-        content = comment.get('content', '')[:80]
-        if len(content) == 80:
-            content += "..."
-        print(f"   {i}. [{comment['likes']}赞] {comment['author']}: {content}")
+    def count_all_comments(comment_list):
+        count = 0
+        for comment in comment_list:
+            count += 1
+            count += count_all_comments(comment.get("replies", []))
+        return count
 
-    if len(comments) > 5:
-        print(f"   ... 还有 {len(comments) - 5} 条")
+    total_count = count_all_comments(comments)
+    print(f"   主评论数: {len(comments)} 条")
+    print(f"   总评论数: {total_count} 条（含子评论）")
+
+    for i, comment in enumerate(comments[:3], 1):
+        content = comment.get('content', '')[:60]
+        if len(content) == 60:
+            content += "..."
+        sub_count = count_all_comments(comment.get("replies", []))
+        print(f"   {i}. [{comment['likes']}赞] {comment['author']}: {content}")
+        if sub_count > 0:
+            print(f"      └─ {sub_count} 条回复")
+
+    if len(comments) > 3:
+        print(f"   ... 还有 {len(comments) - 3} 条主评论")
 
     print("\n" + "="*70)
-    print("✅ 完成！可以使用以下命令分析评论:")
-    print(f"   python comment_analyzer.py -csv {csv_file} -o analysis.md")
+    print("✅ 完成！")
+    print(f"💾 输出文件: {output_file}")
     print("="*70)
 
 
 if __name__ == "__main__":
     import sys
     # 支持命令行参数
-    url = sys.argv[1] if len(sys.argv) > 1 else None
-    count = int(sys.argv[2]) if len(sys.argv) > 2 else None
+    import argparse
+    parser = argparse.ArgumentParser(description="B站评论爬取工具（支持嵌套回复）")
+    parser.add_argument("url", help="视频链接")
+    parser.add_argument("count", nargs="?", type=int, default=50, help="评论数量（默认50）")
+    parser.add_argument("-f", "--format", choices=["json", "md", "csv"], default="json",
+                       help="输出格式：json（嵌套结构）、md（可读格式）、csv（扁平化），默认json")
+
+    args = parser.parse_args()
 
     try:
-        main(url, count)
+        main(args.url, args.count, args.format)
     except KeyboardInterrupt:
         print("\n\n用户中断程序")
     except Exception as e:

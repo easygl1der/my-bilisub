@@ -5,7 +5,11 @@
       "Bash(E:/Anaconda/envs/bilisub/python.exe:*)",
       "Bash(grep:*)",
       "Bash(输出 1,069)",
-      "Bash(conda run:*)"
+      "Bash(conda run:*)",
+      "Bash(call:*)",
+      "Bash(echo:*)",
+      "Bash(ls:*)",
+      "Bash(curl:*)"
     ],
     "deny": [],
     "ask": []

@@ -134,7 +134,7 @@ def get_glm_api_key() -> str:
 
     # 从 config_api.py 获取
     try:
-        from config_api import API_CONFIG
+        from config.config_api import API_CONFIG
         api_key = API_CONFIG.get('zhipu', {}).get('api_key')
         if api_key:
             return api_key

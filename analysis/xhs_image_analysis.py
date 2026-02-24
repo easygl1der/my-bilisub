@@ -1768,7 +1768,7 @@ def get_api_key() -> str:
     # 3. 从 config_api.py 读取
     try:
         sys.path.insert(0, str(Path(__file__).parent.parent))
-        from config_api import API_CONFIG
+        from config.config_api import API_CONFIG
         api_key = API_CONFIG.get('gemini', {}).get('api_key')
         if api_key:
             return api_key
