@@ -1,0 +1,165 @@
+{
+  "video_id": "BV1cFFEzKELg",
+  "total_comments": 12,
+  "fetch_time": "2026-02-24 20:59:27",
+  "comments": [
+    {
+      "comment_id": "292114294736",
+      "content": "@AI视频小助理 总结一下",
+      "likes": 0,
+      "author": "口头禅是好想死",
+      "author_mid": "2141023",
+      "author_avatar": "",
+      "create_time": 1771089702,
+      "reply_to": null,
+      "level": 0,
+      "platform": "bilibili",
+      "replies": []
+    },
+    {
+      "comment_id": "289300763393",
+      "content": "ai确实是好用啊 工作能轻松好多",
+      "likes": 0,
+      "author": "plus代充走某宝",
+      "author_mid": "3691001621252495",
+      "author_avatar": "",
+      "create_time": 1770714649,
+      "reply_to": null,
+      "level": 0,
+      "platform": "bilibili",
+      "replies": []
+    },
+    {
+      "comment_id": "289224416641",
+      "content": "确实很好，就是国内用户不好用啊。目前只有gemini可以稳定用，gpt用过一段时间plus，claude刚有号又不敢用，怕被封[大哭]",
+      "likes": 2,
+      "author": "剋个刘老罐",
+      "author_mid": "268116398",
+      "author_avatar": "",
+      "create_time": 1770653348,
+      "reply_to": null,
+      "level": 0,
+      "platform": "bilibili",
+      "replies": []
+    },
+    {
+      "comment_id": "291343084368",
+      "content": "宝藏博主[打call][打call][打call]",
+      "likes": 0,
+      "author": "panlaosia",
+      "author_mid": "379238528",
+      "author_avatar": "",
+      "create_time": 1770615012,
+      "reply_to": null,
+      "level": 0,
+      "platform": "bilibili",
+      "replies": []
+    },
+    {
+      "comment_id": "291310864816",
+      "content": "gemini有一个超能力，就是在理解用户意图的能力上一骑绝尘，从2.5pro开始就是如此，他非常知道你到底想问什么，甚至在你自己都说不清楚的时候。别的ai通常还是照本宣科，极大程度依赖于提示词在指向上的精确性。",
+      "likes": 29,
+      "author": "duckboot",
+      "author_mid": "8049940",
+      "author_avatar": "",
+      "create_time": 1770595168,
+      "reply_to": null,
+      "level": 0,
+      "platform": "bilibili",
+      "replies": []
+    },
+    {
+      "comment_id": "289096291985",
+      "content": "混凝土搅拌怎么用AI代替好呢[微笑]",
+      "likes": 0,
+      "author": "侗申",
+      "author_mid": "85291856",
+      "author_avatar": "",
+      "create_time": 1770565023,
+      "reply_to": null,
+      "level": 0,
+      "platform": "bilibili",
+      "replies": [
+        {
+          "comment_id": "291309462048",
+          "content": "AI雇佣人类",
+          "likes": 2,
+          "author": "ice-out",
+          "author_mid": "1917299140",
+          "author_avatar": "",
+          "create_time": 1770592934,
+          "reply_to": 289096291985,
+          "level": 1,
+          "platform": "bilibili",
+          "replies": []
+        },
+        {
+          "comment_id": "291532720848",
+          "content": "额，干脆说ai不能代替你吃饭岂不是更加赢麻了[吃瓜]",
+          "likes": 2,
+          "author": "薯条不加番茄酱阿",
+          "author_mid": "3789417",
+          "author_avatar": "",
+          "create_time": 1770729082,
+          "reply_to": 289096291985,
+          "level": 1,
+          "platform": "bilibili",
+          "replies": []
+        },
+        {
+          "comment_id": "291534134336",
+          "content": "ai配比，ai调度 ai生产计划",
+          "likes": 1,
+          "author": "Deanovo",
+          "author_mid": "102888410",
+          "author_avatar": "",
+          "create_time": 1770729798,
+          "reply_to": 289096291985,
+          "level": 1,
+          "platform": "bilibili",
+          "replies": []
+        }
+      ]
+    },
+    {
+      "comment_id": "289081045281",
+      "content": "我老马的grok现在这么拉了吗，提名都没了[doge_金箍][doge_金箍]",
+      "likes": 1,
+      "author": "Dear_-God",
+      "author_mid": "470452150",
+      "author_avatar": "",
+      "create_time": 1770557213,
+      "reply_to": null,
+      "level": 0,
+      "platform": "bilibili",
+      "replies": [
+        {
+          "comment_id": "289120396337",
+          "content": "gork 强在信息收集，尤其是收集一些博主的信息",
+          "likes": 0,
+          "author": "陈皮说运营",
+          "author_mid": "454195754",
+          "author_avatar": "",
+          "create_time": 1770596971,
+          "reply_to": 289081045281,
+          "level": 1,
+          "platform": "bilibili",
+          "replies": []
+        },
+        {
+          "comment_id": "291271894064",
+          "content": "我觉得用gork看X挺好用的",
+          "likes": 0,
+          "author": "雪山銀讌",
+          "author_mid": "1592770901",
+          "author_avatar": "",
+          "create_time": 1770557692,
+          "reply_to": 289081045281,
+          "level": 1,
+          "platform": "bilibili",
+          "replies": []
+        }
+      ]
+    }
+  ]
+}

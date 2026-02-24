@@ -1748,32 +1748,16 @@ STYLE_DETECTION_PROMPT = """请分析以下图文笔记的内容，判断它属�
 
 def get_api_key() -> str:
     """获取 Gemini API Key"""
-    # 1. 优先从 bot_config.json 读取
+    # 只从 bot_config.json 读取
     try:
         config_path = Path(__file__).parent.parent / 'config' / 'bot_config.json'
-        if config_path.exists():
-            with open(config_path, 'r', encoding='utf-8') as f:
-                config = json.load(f)
-                api_key = config.get('gemini_api_key')
-                if api_key:
-                    return api_key
-    except Exception:
-        pass
-
-    # 2. 从环境变量读取
-    api_key = os.environ.get('GEMINI_API_KEY')
-    if api_key:
-        return api_key
-
-    # 3. 从 config_api.py 读取
-    try:
-        sys.path.insert(0, str(Path(__file__).parent.parent))
-        from config.config_api import API_CONFIG
-        api_key = API_CONFIG.get('gemini', {}).get('api_key')
-        if api_key:
-            return api_key
-    except ImportError:
-        pass
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+            api_key = config.get('gemini_api_key')
+            if api_key:
+                return api_key
+    except Exception as e:
+        print(f"⚠️  读取配置文件失败: {e}")
 
     return None
 

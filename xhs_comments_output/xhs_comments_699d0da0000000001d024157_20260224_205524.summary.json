@@ -1,0 +1,14 @@
+{
+  "total_comments": 40,
+  "top_level_comments": 32,
+  "reply_comments": 8,
+  "unique_authors": 1,
+  "top_authors": [
+    {
+      "nickname": "未知用户",
+      "comment_count": 40,
+      "total_likes": 79
+    }
+  ],
+  "sample_reply_relations": []
+}

@@ -85,7 +85,7 @@ except Exception as e:
 OUTPUT_DIR = "bili_comments_output"
 
 # 每页评论数
-PAGE_SIZE = 20
+PAGE_SIZE = 50  # 增加每页数量，确保爬取所有评论
 
 # 请求延迟
 REQUEST_DELAY = 1

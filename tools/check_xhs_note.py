@@ -56,30 +56,76 @@ def check_note_type(url):
         print("笔记类型分析:")
         print("-"*80)
 
-        # 方法1: 检查视频流
-        has_video_stream = 'video' in response.text.lower() and 'stream' in response.text.lower()
-        has_video_object = '"video":' in response.text
-        has_media = '"media":' in response.text
-
-        # 方法2: 检查图片
-        has_image_list = 'imageList' in response.text and '"urlDefault"' in response.text
-
         # 计算图片数量
+        has_image_list = 'imageList' in response.text and '"urlDefault"' in response.text
+        img_count = 0
         if has_image_list:
             img_count = response.text.count('"urlDefault"')
             print(f"图片数量: {img_count}")
         else:
             print("图片数量: 0")
 
-        # 方法3: 检查 type 字段
+        # 检查 type 字段
         type_matches = re.findall(r'"type":\s*"(\w+)"', response.text)
         if type_matches:
-            print(f"笔记类型字段: {type_matches[0] if type_matches else 'N/A'}")
+            # 过滤掉无关的 type 字段
+            relevant_types = [t for t in type_matches if t in ('video', 'normal', 'default', 'image')]
+            if relevant_types:
+                print(f"笔记类型字段: {relevant_types[0]}")
 
+        # 检查视频特征（只使用明确特征）
+        # 视频页面特有的字段
+        has_play_addr = '"playAddr":' in response.text or '"play_addr":' in response.text
+        has_media_video = re.search(r'"media":\s*\{[^}]*"video":\s*\{', response.text)
+
+        # 显示检测到的特征
+        print("检测特征:")
+        if has_play_addr:
+            print("  ✓ 检测到 playAddr 字段（视频特征）")
+        if has_media_video:
+            print("  ✓ 检测到 media.video 嵌套结构（视频特征）")
+        if not has_play_addr and not has_media_video:
+            print("  ✗ 未检测到明确的视频特征")
         print()
 
         # 判断笔记类型
-        if has_video_stream or (has_video_object and has_media):
+        note_type = "未知"
+        confidence = "低"
+
+        # 逻辑（优先从明确特征判断）：
+        # 1. 检测到明确的视频特征 → 视频（高置信度）
+        # 2. 图片数量 >= 2 → 图文（高置信度）
+        # 3. 图片数量 == 1 且无视频特征 → 图文（中置信度，可能是单图图文）
+        # 4. 默认认为是图文
+        if has_play_addr or has_media_video:
+            note_type = "视频"
+            confidence = "高"
+        elif img_count >= 2:
+            note_type = "图文"
+            confidence = "高"
+        elif img_count == 1:
+            # 单图情况：如果没有任何视频特征，更可能是单图图文
+            note_type = "图文"
+            confidence = "中"
+        elif has_image_list:
+            note_type = "图文"
+            confidence = "中"
+
+        print(f"检测类型: {note_type} (置信度: {confidence})")
+        print()
+
+        # 根据判断结果给出推荐
+        if note_type == "图文":
+            print("[图文笔记]")
+            print()
+            print("推荐下载方式:")
+            print("  使用小红书图文下载工具:")
+            print(f"    python platforms/xiaohongshu/download_xhs_images.py \"{url}\"")
+            print()
+            print("  或使用工作流:")
+            print(f"    python workflows/auto_xhs_image_workflow.py \"{url}\"")
+
+        elif note_type == "视频" or note_type == "可能是视频":
             print("[视频笔记]")
             print()
             print("推荐下载方式:")
@@ -89,16 +135,6 @@ def check_note_type(url):
             print()
             print("  方法2: 如果 yt-dlp 支持更新，稍后重试")
             print("    pip install --upgrade yt-dlp")
-
-        elif has_image_list:
-            print("[图文笔记]")
-            print()
-            print("推荐下载方式:")
-            print("  使用小红书图文下载工具:")
-            print(f"    python platforms/xiaohongshu/download_xhs_images.py \"{url}\"")
-            print()
-            print("  或使用工作流:")
-            print(f"    python workflows/auto_xhs_image_workflow.py \"{url}\"")
         else:
             print("[无法确定笔记类型]")
             print()

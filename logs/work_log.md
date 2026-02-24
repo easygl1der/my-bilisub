@@ -1,10 +1,61 @@
 # 开发工作日志
 
-生成时间: 2026-02-24 19:50:37
+生成时间: 2026-02-24 20:57:08
 
 ---
 
 ## 2026-02-24
+
+### [feature] 完成小红书评论爬取工具 fetch_xhs_comments.py
+
+- **时间**: 20:56:57
+- **类型**: 新功能
+- **ID**: 20260224205657
+- **涉及文件**: platforms/xiaohongshu/fetch_xhs_comments.py
+- **标签**: 小红书,评论爬取,HTML解析
+- **详情**: 使用 Playwright 加载页面并滚动加载评论，从 HTML 中提取评论数据，构建评论树结构。
+
+测试结果：
+- 笔记ID: 699d0da0000000001d024157
+- 总评论数: 40 条
+- 顶级评论: 32 条
+- 回复评论: 8 条
+- 独一作者: 1 位
+
+输出格式：
+- JSON 格式（嵌套结构）：xhs_comments_output/xhs_comments_{note_id}_{timestamp}.json
+- 统计摘要：xhs_comments_output/xhs_comments_{note_id}_{timestamp}.summary.json
+
+完美实现。
+
+---
+
+### [feature] 完善小红书笔记类型检测工具 check_xhs_note.py
+
+- **时间**: 20:46:02
+- **类型**: 新功能
+- **ID**: 20260224204602
+- **涉及文件**: tools/check_xhs_note.py
+- **标签**: 小红书,类型检测,链接验证
+- **详情**: 完美实现小红书笔记类型自动检测，区分视频和图文笔记。
+
+核心功能：
+1. 检测图片数量（通过 urlDefault 字段）
+2. 检测视频特征（playAddr 和 media.video 嵌套结构）
+3. 智能判断笔记类型并给出置信度
+
+判断逻辑：
+- 检测到视频特征 → 视频（高置信度）
+- 图片数量 >= 2 → 图文（高置信度）
+- 图片数量 == 1 且无视频特征 → 图文（中置信度）
+
+推荐下载方式：
+- 图文：download_xhs_images.py 或 auto_xhs_image_workflow.py
+- 视频：test_video_download.py（yt-dlp）或 MediaCrawler
+
+完美实现。
+
+---
 
 ### [fix] 确认 yt-dlp 小红书视频下载功能正常
 

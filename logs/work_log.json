@@ -1,5 +1,35 @@
 [
   {
+    "id": "20260224205657",
+    "timestamp": "2026-02-24T20:56:57.567552",
+    "date": "2026-02-24",
+    "time": "20:56:57",
+    "change_type": "feature",
+    "description": "完成小红书评论爬取工具 fetch_xhs_comments.py",
+    "files": [
+      "platforms/xiaohongshu/fetch_xhs_comments.py"
+    ],
+    "details": "使用 Playwright 加载页面并滚动加载评论，从 HTML 中提取评论数据，构建评论树结构。\n\n测试结果：\n- 笔记ID: 699d0da0000000001d024157\n- 总评论数: 40 条\n- 顶级评论: 32 条\n- 回复评论: 8 条\n- 独一作者: 1 位\n\n输出格式：\n- JSON 格式（嵌套结构）：xhs_comments_output/xhs_comments_{note_id}_{timestamp}.json\n- 统计摘要：xhs_comments_output/xhs_comments_{note_id}_{timestamp}.summary.json\n\n完美实现。",
+    "tags": [
+      "小红书,评论爬取,HTML解析"
+    ]
+  },
+  {
+    "id": "20260224204602",
+    "timestamp": "2026-02-24T20:46:02.128151",
+    "date": "2026-02-24",
+    "time": "20:46:02",
+    "change_type": "feature",
+    "description": "完善小红书笔记类型检测工具 check_xhs_note.py",
+    "files": [
+      "tools/check_xhs_note.py"
+    ],
+    "details": "完美实现小红书笔记类型自动检测，区分视频和图文笔记。\n\n核心功能：\n1. 检测图片数量（通过 urlDefault 字段）\n2. 检测视频特征（playAddr 和 media.video 嵌套结构）\n3. 智能判断笔记类型并给出置信度\n\n判断逻辑：\n- 检测到视频特征 → 视频（高置信度）\n- 图片数量 >= 2 → 图文（高置信度）\n- 图片数量 == 1 且无视频特征 → 图文（中置信度）\n\n推荐下载方式：\n- 图文：download_xhs_images.py 或 auto_xhs_image_workflow.py\n- 视频：test_video_download.py（yt-dlp）或 MediaCrawler\n\n完美实现。",
+    "tags": [
+      "小红书,类型检测,链接验证"
+    ]
+  },
+  {
     "id": "20260224195022",
     "timestamp": "2026-02-24T19:50:22.540618",
     "date": "2026-02-24",

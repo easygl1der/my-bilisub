@@ -412,21 +412,30 @@ def generate_ai_report(notes, output_dir):
         print("💡 安装命令: pip install google-generativeai")
         return
 
-    # 配置API（修正拼写：GEMINI -> GEMINI）
-    api_key = os.environ.get('GEMINI_API_KEY', '')
+    # 配置API：优先从 bot_config.json 读取
+    api_key = None
     config_file = PROJECT_DIR / "config" / "bot_config.json"
+
     if config_file.exists():
         try:
             with open(config_file, 'r', encoding='utf-8') as f:
                 config = json.load(f)
             if 'gemini_api_key' in config:
                 api_key = config['gemini_api_key']
-        except:
-            pass
+                print(f"✅ API Key 读取成功: {api_key[:20]}...{api_key[-5:]}")
+        except Exception as e:
+            print(f"⚠️  读取配置文件失败: {e}")
+
+    # 如果配置文件中没有，再尝试环境变量
+    if not api_key:
+        api_key = os.environ.get('GEMINI_API_KEY', '')
+        if api_key:
+            print(f"✅ API Key 从环境变量读取: {api_key[:20]}...{api_key[-5:]}")
 
     if not api_key:
-        print("⚠️  未设置GEMINI_API_KEY")
-        print("💡 设置: set GEMINI_API_KEY=your_key_here")
+        print("⚠️  未设置 API Key")
+        print("💡 方法1: 在 config/bot_config.json 中添加 gemini_api_key")
+        print("💡 方法2: 设置环境变量: set GEMINI_API_KEY=your_key_here")
         return
 
     # 根据SDK版本使用不同的API
