@@ -51,7 +51,7 @@ IMAGES_OUTPUT = OUTPUT_DIR / "xhs_images"
 ANALYSIS_OUTPUT = OUTPUT_DIR / "xhs_analysis"
 
 # 工作流脚本
-FETCH_IMAGES_SCRIPT = PROJECT_ROOT / "utils" / "fetch_xhs_image_notes.py"
+FETCH_IMAGES_SCRIPT = PROJECT_ROOT / "platforms" / "xiaohongshu" / "fetch_xhs_image_notes.py"
 IMAGE_ANALYSIS_SCRIPT = PROJECT_ROOT / "analysis" / "xhs_image_analysis.py"
 
 
@@ -88,6 +88,8 @@ def fetch_image_notes(url: str, count: int = None) -> tuple:
             check=True,
             capture_output=True,
             text=True,
+            encoding='utf-8',
+            errors='ignore',
             cwd=PROJECT_ROOT
         )
 

@@ -1,12 +1,19 @@
 #!/usr/bin/env python3
 """
-AI自动刷小红书推荐并总结（完整版）
+AI自动刷小红书推荐并总结（完整版 - 性能优化）
 
 功能：
 1. 刷新小红书推荐页（自定义次数）
 2. 采集推荐内容（视频/图文、作者信息）
 3. 导出CSV
 4. AI生成分析报告（可选）
+
+性能优化：
+- 智能滚动：自动检测页面是否还有新内容加载
+- 优化等待策略：使用networkidle替代固定延迟
+- 轮询登录检查：每5秒检查一次，最多等待90秒
+- 优化DOM解析：减少不必要的DOM遍历
+- 可选无头模式：--headless 运行更快（不显示浏览器）
 
 使用示例:
     python ai_xiaohongshu_homepage.py
@@ -16,6 +23,9 @@ AI自动刷小红书推荐并总结（完整版）
 
     # 完整流程（采集+AI分析）
     python ai_xiaohongshu_homepage.py --mode full
+
+    # 使用无头模式（更快，适合自动任务）
+    python ai_xiaohongshu_homepage.py --mode full --headless
 """
 
 import argparse
@@ -26,6 +36,7 @@ import re
 import os
 from pathlib import Path
 from datetime import datetime
+import time
 
 # Windows编码修复
 if sys.platform == 'win32':
@@ -76,17 +87,29 @@ def read_xhs_cookie():
 async def scrape_xiaohongshu_homepage(
     refresh_count: int = 3,
     max_notes: int = 50,
-    cookie: str = ""
+    cookie: str = "",
+    headless: bool = False
 ) -> list:
     """使用Playwright爬取小红书推荐页"""
     notes_collected = []
     seen_urls = set()
 
     async with async_playwright() as p:
-        # 启动浏览器
-        browser = await p.chromium.launch(headless=False)
+        # 启动浏览器（优化：禁用不必要的功能以提升速度）
+        browser = await p.chromium.launch(
+            headless=headless,
+            args=[
+                '--disable-blink-features=AutomationControlled',
+                '--disable-dev-shm-usage',
+                '--disable-gpu',
+                '--no-sandbox'
+            ]
+        )
         context = await browser.new_context(
-            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            viewport={'width': 1920, 'height': 1080},
+            locale='zh-CN',
+            timezone_id='Asia/Shanghai'
         )
 
         # 设置Cookie
@@ -112,54 +135,85 @@ async def scrape_xiaohongshu_homepage(
 
         print(f"\n📡 访问小红书首页...")
         try:
-            await page.goto('https://www.xiaohongshu.com/', wait_until='domcontentloaded', timeout=60000)
-            await asyncio.sleep(5)
+            await page.goto('https://www.xiaohongshu.com/', wait_until='networkidle', timeout=60000)
         except Exception as e:
             print(f"⚠️  页面加载问题: {e}")
             print("💡 浏览器已打开，请检查网络连接")
 
-        # 检查登录状态
-        page_content = await page.content()
-        if '登录' in page_content and '注册' in page_content:
+        # 检查登录状态（优化：轮询检查而非固定等待90秒）
+        async def check_logged_in():
+            try:
+                content = await page.content()
+                return not ('登录' in content and '注册' in content)
+            except:
+                return False
+
+        if not await check_logged_in():
             print("\n⚠️  检测到未登录状态")
             print("💡 请在浏览器中手动登录")
-            print("⏳ 等待90秒...登录完成后会自动继续")
-            await asyncio.sleep(90)
-            print("✅ 继续执行...")
+            print("⏳ 每5秒检查一次登录状态，最多等待90秒...")
+
+            # 轮询检查登录状态，最多90秒
+            max_wait = 18  # 18次 * 5秒 = 90秒
+            for i in range(max_wait):
+                await asyncio.sleep(5)
+                if await check_logged_in():
+                    print(f"✅ 已检测到登录！(耗时 {5 * (i+1)}秒)")
+                    break
+                if i == max_wait - 1:
+                    print("⚠️  超时未检测到登录，继续执行...")
 
         print(f"\n🔄 开始采集推荐内容（刷新{refresh_count}次）...")
 
         for i in range(refresh_count):
             print(f"\n  刷新 {i+1}/{refresh_count}")
 
-            # 滚动加载
-            for scroll in range(10):
-                await page.evaluate('window.scrollBy(0, window.innerHeight)')
-                await asyncio.sleep(1)
+            # 优化：智能滚动，直到内容不再明显增加
+            prev_height = 0
+            scroll_stuck_count = 0
+            max_scrolls = 10
 
-            # 等待内容加载
-            await asyncio.sleep(2)
+            for scroll in range(max_scrolls):
+                await page.evaluate('window.scrollBy(0, window.innerHeight * 0.8)')
 
-            # 获取所有链接和信息（最终版）
+                # 检查页面高度是否增加
+                current_height = await page.evaluate('document.body.scrollHeight')
+                if current_height == prev_height:
+                    scroll_stuck_count += 1
+                    if scroll_stuck_count >= 2:  # 连续2次高度不变则停止
+                        break
+                else:
+                    scroll_stuck_count = 0
+                    prev_height = current_height
+
+                # 减少等待时间：首次等待稍长，后续等待时间递减
+                wait_time = 0.5 if scroll < 3 else 0.3
+                await asyncio.sleep(wait_time)
+
+            # 减少内容加载等待时间
+            await asyncio.sleep(1)
+
+            # 获取所有链接和信息（优化版：减少DOM遍历，提前退出）
             try:
                 notes_data = await page.evaluate('''
                     () => {
                         const notes = [];
                         const seen = new Set();
+                        const MAX_NOTES = 50;  // 限制返回数量，减少数据处理时间
 
-                        // 查找所有笔记卡片（使用更通用的选择器）
-                        const cards = document.querySelectorAll('section, article, [class*="note"], [class*="card"], div[class*="item"]');
+                        // 查找所有笔记卡片（使用更高效的选择器）
+                        const links = document.querySelectorAll('a[href*="xsec_token"]');
 
-                        cards.forEach(card => {
-                            // 直接查找带 xsec_token 的链接
-                            const link = card.querySelector('a[href*="xsec_token"]');
-                            if (!link) return;
+                        for (const link of links) {
+                            if (notes.length >= MAX_NOTES) break;
 
                             const url = link.href;
+                            const card = link.closest('section, article, [class*="note"], [class*="card"], div[class*="item"]');
+                            if (!card) continue;
 
                             // 从 URL 中提取 xsec_token 和 xsec_source
                             let xsecToken = '';
-                            let xsecSource = 'pc_homepage';  // 默认来源为首页
+                            let xsecSource = 'pc_homepage';
 
                             try {
                                 const urlParams = new URLSearchParams(url.split('?')[1]);
@@ -167,9 +221,7 @@ async def scrape_xiaohongshu_homepage(
                                 if (urlParams.get('xsec_source')) {
                                     xsecSource = urlParams.get('xsec_source');
                                 }
-                            } catch (e) {
-                                // URL 解析失败，继续使用空值
-                            }
+                            } catch (e) {}
 
                             // 提取笔记ID
                             let noteId = "";
@@ -181,87 +233,50 @@ async def scrape_xiaohongshu_homepage(
                                 if (idMatch) noteId = idMatch[1];
                             }
 
-                            if (!noteId) return;
-                            if (seen.has(noteId)) return;
+                            if (!noteId || seen.has(noteId)) continue;
                             seen.add(noteId);
 
-                            // 获取标题（使用多种方法）
+                            // 获取标题（简化版）
                             let title = "无标题";
-
-                            // 方法1: 查找span或div中的文本
-                            const textNodes = card.querySelectorAll('span, div, p, h1, h2, h3');
-                            for (const node of textNodes) {
-                                const text = node.textContent?.trim();
-                                // 标题特征：3-100字符，不含数字序号
-                                if (text && text.length > 3 && text.length < 100 && !/^\\d+$/.test(text)) {
-                                    // 排除明显不是标题的内容
-                                    if (!text.includes('赞') && !text.includes('关注') &&
-                                        !text.includes('分享') && !text.includes('收藏')) {
-                                        title = text.substring(0, 100);
-                                        break;
-                                    }
-                                }
-                            }
-
-                            // 方法2: 从链接的title属性获取
-                            if (title === "无标题") {
-                                const linkTitle = link.getAttribute('title');
-                                if (linkTitle && linkTitle.length > 3) {
-                                    title = linkTitle.substring(0, 100);
-                                }
-                            }
-
-                            // 获取作者
-                            let author = "未知作者";
-                            const authorNodes = card.querySelectorAll('span, a');
-                            for (const node of authorNodes) {
-                                const text = node.textContent?.trim();
-                                // 作者特征：1-30字符，可能是人名
-                                if (text && text.length > 1 && text.length < 30) {
-                                    // 排除包含数字的（可能是点赞数）
-                                    if (!/\\d/.test(text)) {
-                                        author = text;
-                                        break;
-                                    }
-                                }
-                            }
-
-                            // 获取点赞数（改进版）
-                            let likes = "0";
-                            const allNodes = card.querySelectorAll('*');
-                            for (const node of allNodes) {
-                                const text = node.textContent?.trim();
-                                // 查找包含数字的节点（可能是点赞数）
-                                if (text && /^\\d+/.test(text)) {
-                                    // 验证父元素是否有like、count等class
-                                    const parentClass = node.parentElement?.className || '';
-                                    if (parentClass.includes('like') || parentClass.includes('count') ||
-                                        parentClass.includes('interact')) {
-                                        // 排除明显过大的数字
-                                        const num = parseInt(text);
-                                        if (num < 1000000 && num > 0) {
-                                            likes = text;
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-
-                            // 判断类型（最终版）
-                            let type = 'image';
-
-                            // 方法1: 检查video标签
-                            const hasVideo = card.querySelector('video');
-                            if (hasVideo) {
-                                type = 'video';
+                            const linkTitle = link.getAttribute('title');
+                            if (linkTitle && linkTitle.length > 3) {
+                                title = linkTitle.substring(0, 100);
                             } else {
-                                // 方法2: 检查是否有播放图标或时长标记
-                                const hasPlayIcon = card.querySelector('[class*="play"], [class*="video"], svg[class*="play"]');
-                                const hasDuration = card.textContent.includes(':') && card.textContent.match(/\\d+:\\d+/);
-                                if (hasPlayIcon || hasDuration) {
-                                    type = 'video';
+                                // 仅查找最近级别的文本节点
+                                const textNode = card.querySelector('span, div, p');
+                                const text = textNode?.textContent?.trim();
+                                if (text && text.length > 3 && text.length < 100 && !/^\\d+$/.test(text)) {
+                                    title = text.substring(0, 100);
                                 }
                             }
+
+                            // 获取作者（简化版）
+                            let author = "未知作者";
+                            const authorNode = card.querySelector('a[href*="/user/profile/"], span.author');
+                            if (authorNode) {
+                                const text = authorNode.textContent?.trim();
+                                if (text && text.length > 1 && text.length < 30 && !/\\d/.test(text)) {
+                                    author = text;
+                                }
+                            }
+
+                            // 获取点赞数（简化版）
+                            let likes = "0";
+                            const likeNode = card.querySelector('[class*="like"], [class*="count"]');
+                            if (likeNode) {
+                                const text = likeNode.textContent?.trim();
+                                if (text && /^\\d+$/.test(text)) {
+                                    const num = parseInt(text);
+                                    if (num > 0 && num < 1000000) {
+                                        likes = text;
+                                    }
+                                }
+                            }
+
+                            // 判断类型（优化版）
+                            const type = card.querySelector('video, [class*="play"], [class*="duration"]') ||
+                                        (card.textContent.includes(':') && /\\d+:\\d+/.test(card.textContent))
+                                        ? 'video' : 'image';
 
                             notes.push({
                                 url: url,
@@ -270,10 +285,10 @@ async def scrape_xiaohongshu_homepage(
                                 author: author,
                                 likes: likes,
                                 type: type,
-                                xsecToken: xsecToken,      // 新增字段
-                                xsecSource: xsecSource     // 新增字段
+                                xsecToken: xsecToken,
+                                xsecSource: xsecSource
                             });
-                        });
+                        }
 
                         return notes;
                     }
@@ -327,8 +342,8 @@ async def scrape_xiaohongshu_homepage(
             # 刷新
             if i < refresh_count - 1:
                 print("    刷新页面...")
-                await page.reload(wait_until='domcontentloaded', timeout=60000)
-                await asyncio.sleep(3)
+                await page.reload(wait_until='networkidle', timeout=60000)
+                await asyncio.sleep(1)  # 减少等待时间
 
         await browser.close()
 
@@ -423,17 +438,20 @@ def generate_ai_report(notes, output_dir):
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel('gemini-2.5-flash')
 
-    # 生成报告
+    # 生成报告 - 使用与CSV相同的完整数据
     notes_text = "\n\n".join([
-        f"{i+1}. {note.get('title', '无标题')}\n"
-        f"   作者: {note.get('author', '未知')}\n"
-        f"   类型: {note.get('type', '未知')}\n"
-        f"   点赞: {note.get('likes', '0')}\n"
-        f"   链接: {note.get('url', '')}\n"
-        for i, note in enumerate(notes[:15])  # 只分析前15个
+        f"{note.get('序号', i+1)}. 【{note.get('标题', '无标题')}】\n"
+        f"   作者: {note.get('作者', '未知')}\n"
+        f"   类型: {note.get('类型', '未知')}\n"
+        f"   点赞: {note.get('点赞数', '0')}\n"
+        f"   链接: {note.get('链接', '')}\n"
+        f"   笔记ID: {note.get('笔记ID', '')}\n"
+        f"   爬取批次: 第{note.get('爬取批次', 1)}次\n"
+        f"   采集时间: {note.get('采集时间', '')}\n"
+        for i, note in enumerate(notes)  # 分析所有笔记
     ])
 
-    prompt = f"""你是一个专业的社交媒体内容分析师。请分析以下小红书推荐内容，生成一份趋势报告。
+    prompt = f"""你是一个专业的社交媒体内容分析师。请分析以下小红书推荐内容，生成一份详细的趋势报告。
 
 小红书推荐内容：
 {notes_text}
@@ -444,25 +462,30 @@ def generate_ai_report(notes, output_dir):
 
 ### 🎯 内容概览
 - 采集笔记数：{len(notes)}篇
-- 视频占比：{notes.count(lambda x: x['type'] == 'video')}篇 ({notes.count(lambda x: x['type'] == 'video')/len(notes)*100:.1f}%)
-- 图文占比：{notes.count(lambda x: x['type'] == 'image')}篇 ({notes.count(lambda x: x['type'] == 'image')/len(notes)*100:.1f}%)
+- 视频占比：{sum(1 for n in notes if n.get('类型') == 'video')}篇 ({sum(1 for n in notes if n.get('类型') == 'video')/len(notes)*100:.1f}%)
+- 图文占比：{sum(1 for n in notes if n.get('类型') == 'image')}篇 ({sum(1 for n in notes if n.get('类型') == 'image')/len(notes)*100:.1f}%)
+- 爬取批次：共{max((n.get('爬取批次', 1) for n in notes), default=1)}次刷新
 
 ### 🔥 热门主题（Top 5）
-提取最受欢迎的5个主题
+基于笔记标题和内容，提取最受欢迎的5个主题
 
 ### 👥 热门作者（Top 5）
-列举发布最多内容的5个作者
+列举出现最频繁的5个作者，标注各自出现次数和平均点赞数
 
 ### 📈 趋势分析
-分析当前小红书推荐的内容趋势，包括：
-- 热门话题
-- 内容偏好
+基于所有笔记数据，分析当前小红书推荐的内容趋势：
+- 热门话题分布
+- 内容偏好特征
 - 受欢迎的内容类型
+- 不同爬取批次的内容差异（如果明显）
 
 ### 💎 值得关注的笔记
-推荐3-5个值得深入阅读的笔记（附链接）
+综合点赞数、内容质量，推荐3-5个值得深入阅读的笔记（附完整链接和推荐理由）
 
-请确保报告结构完整，每个部分都要有实质内容。"""
+### 📋 数据洞察（可选）
+如果有特别有趣的数据发现，请在此说明
+
+请确保报告结构完整，每个部分都要有实质内容，数据引用要准确。"""
 
     try:
         if use_new_sdk:
@@ -511,32 +534,41 @@ async def main():
     parser.add_argument('--mode', type=str, default='scrape',
                        choices=['scrape', 'full'],
                        help='模式: scrape=仅采集, full=采集+AI分析')
+    parser.add_argument('--headless', action='store_true',
+                       help='使用无头模式运行（更快，但不显示浏览器）')
 
     args = parser.parse_args()
 
     print(f"\n{'='*70}")
-    print(f"  AI自动刷小红书推荐")
+    print(f"  AI自动刷小红书推荐（优化版）")
     print(f"{'='*70}")
     print(f"\n📊 配置:")
     print(f"  • 刷新次数: {args.refresh_count}")
     print(f"  • 最多笔记: {args.max_notes}")
     print(f"  • 分析模式: {args.mode}")
+    print(f"  • 无头模式: {'是' if args.headless else '否'}")
 
     # 读取Cookie
     cookie = read_xhs_cookie()
     if not cookie:
         print("\n⚠️  未找到Cookie，将使用无Cookie模式（需要手动登录）")
 
-    # 采集数据
+    # 采集数据（带性能监控）
+    start_time = time.time()
     notes = await scrape_xiaohongshu_homepage(
         refresh_count=args.refresh_count,
         max_notes=args.max_notes,
-        cookie=cookie
+        cookie=cookie,
+        headless=args.headless
     )
+    scrape_time = time.time() - start_time
 
     if not notes:
         print("\n❌ 未采集到任何笔记")
         return
+
+    print(f"\n⏱️  采集耗时: {scrape_time:.1f}秒")
+    print(f"📊 采集速度: {len(notes)/scrape_time:.2f} 笔记/秒")
 
     # 导出CSV
     date_str = datetime.now().strftime('%Y-%m-%d')

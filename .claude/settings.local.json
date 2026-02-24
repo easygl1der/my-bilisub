@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(python:*)",
-      "Bash(E:/Anaconda/envs/bilisub/python.exe:*)"
+      "Bash(E:/Anaconda/envs/bilisub/python.exe:*)",
+      "Bash(grep:*)"
     ],
     "deny": [],
     "ask": []
