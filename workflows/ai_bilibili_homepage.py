@@ -82,7 +82,7 @@ except ImportError:
 
 
 # ==================== 路径配置 ====================
-PROJECT_DIR = Path(__file__).parent
+PROJECT_DIR = Path(__file__).parent.parent  # 获取根目录
 MEDIA_CRAWLER_DIR = PROJECT_DIR / "MediaCrawler"
 SUBTITLE_OUTPUT = MEDIA_CRAWLER_DIR / "bilibili_subtitles"
 
@@ -398,7 +398,10 @@ async def scrape_homepage_recommend(
             refresh_times.append(batch_time)
 
             await page.goto("https://www.bilibili.com")
-            await page.wait_for_timeout(3000)  # 等待页面加载
+            # 优化：使用智能等待，等待关键元素加载完成
+            await page.wait_for_selector('.bili-video-card', timeout=15000)
+            await page.wait_for_load_state('networkidle', timeout=10000)
+            await asyncio.sleep(1)  # 短暂缓冲
 
             # 获取页面内容
             content = await page.content()
@@ -427,7 +430,8 @@ async def scrape_homepage_recommend(
 
             # 滚动页面触发加载（为下一次刷新做准备）
             await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            await page.wait_for_timeout(2000)
+            # 优化：智能滚动检测
+            await page.wait_for_function("document.body.scrollHeight > 0", timeout=5000)
 
         await browser.close()
 
@@ -672,15 +676,17 @@ def write_csv_status(csv_path: Path, videos: List[Dict]):
 async def extract_subtitles_from_csv(
     csv_path: Path,
     subtitle_dir: Path,
-    limit: int = None
+    limit: int = None,
+    max_concurrent: int = 5
 ):
     """
-    从CSV文件批量提取字幕
+    从CSV文件批量提取字幕（并发优化版）
 
     Args:
         csv_path: CSV文件路径
         subtitle_dir: 字幕输出目录
         limit: 限制处理视频数量
+        max_concurrent: 最大并发数（默认5）
     """
     print("\n" + "=" * 70)
     print("📝 步骤 2/3: 批量提取字幕（内置字幕优先）")
@@ -702,6 +708,7 @@ async def extract_subtitles_from_csv(
         print(f"🔢 限制数量: {limit}")
 
     print(f"📊 找到 {len(videos)} 个视频")
+    print(f"⚡ 并发数: {max_concurrent}")
     print()
 
     # 创建字幕输出目录
@@ -713,13 +720,15 @@ async def extract_subtitles_from_csv(
     success_count = 0
     no_subtitle_count = 0
     fail_count = 0
+    skipped_count = 0
 
     # 总计时
     total_start_time = time.time()
 
-    for i, video_data in enumerate(videos, 1):
+    # 过滤需要处理的视频
+    pending_tasks = []
+    for i, video_data in enumerate(videos):
         bvid = video_data.get('BV号', '')
-        title = video_data.get('标题', '未命名')
 
         if not bvid:
             no_subtitle_count += 1
@@ -728,38 +737,64 @@ async def extract_subtitles_from_csv(
         # 检查是否已处理
         current_status = video_data.get('字幕状态', '').strip()
         if current_status in ['已提取', '无字幕']:
-            print(f"[{i}/{len(videos)}] 跳过: {title[:40]}... ({current_status})")
+            skipped_count += 1
             continue
 
-        print(f"[{i}/{len(videos)}] {title[:40]}...")
+        # 添加待处理任务
+        pending_tasks.append((i, video_data))
 
-        # 获取字幕
-        result = await fetch_subtitle_srt(bvid, title, subtitle_dir)
+    print(f"📋 待处理视频: {len(pending_tasks)} 个（已跳过 {skipped_count} 个）")
+    print()
 
-        if result['success']:
-            print(f"  ✅ 成功")
-            video_data['字幕状态'] = '已提取'
-            video_data['字幕路径'] = result['srt_path']
-            success_count += 1
-        elif result['error'] == '无字幕':
-            print(f"  ⚠️  无字幕")
-            video_data['字幕状态'] = '无字幕'
-            no_subtitle_count += 1
-        else:
-            print(f"  ❌ 失败: {result['error']}")
-            video_data['字幕状态'] = '提取失败'
+    # 使用信号量控制并发
+    semaphore = asyncio.Semaphore(max_concurrent)
+
+    async def process_video(index: int, video_data: dict):
+        """处理单个视频的包装函数（带并发控制）"""
+        async with semaphore:
+            bvid = video_data.get('BV号', '')
+            title = video_data.get('标题', '未命名')
+
+            print(f"[{len(pending_tasks) - pending_tasks.count(None)}/{len(pending_tasks)}] {title[:40]}...", end='\r')
+
+            # 获取字幕
+            result = await fetch_subtitle_srt(bvid, title, subtitle_dir)
+
+            if result['success']:
+                print(f"  ✅ [{title[:30]}]")
+                video_data['字幕状态'] = '已提取'
+                video_data['字幕路径'] = result['srt_path']
+                return 'success'
+            elif result['error'] == '无字幕':
+                print(f"  ⚠️  [{title[:30]}] - 无字幕")
+                video_data['字幕状态'] = '无字幕'
+                return 'no_subtitle'
+            else:
+                print(f"  ❌ [{title[:30]}] - {result['error'][:30]}")
+                video_data['字幕状态'] = '提取失败'
+                return 'fail'
+
+    # 并发执行所有任务
+    tasks = [process_video(i, video_data) for i, video_data in pending_tasks]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    # 统计结果
+    for result in results:
+        if isinstance(result, Exception):
             fail_count += 1
-
-        # 每处理 5 个视频保存一次进度
-        if i % 5 == 0:
-            write_csv_status(csv_path, videos)
-            print(f"  [进度已保存]")
+        elif result == 'success':
+            success_count += 1
+        elif result == 'no_subtitle':
+            no_subtitle_count += 1
+        elif result == 'fail':
+            fail_count += 1
 
     # 最终保存
     write_csv_status(csv_path, videos)
 
     # 总耗时
     total_elapsed = time.time() - total_start_time
+    speed = len(pending_tasks) / total_elapsed if total_elapsed > 0 else 0
 
     print()
     print("=" * 70)
@@ -767,7 +802,10 @@ async def extract_subtitles_from_csv(
     print(f"   成功: {success_count} 个")
     print(f"   无字幕: {no_subtitle_count} 个")
     print(f"   失败: {fail_count} 个")
+    print(f"   跳过: {skipped_count} 个")
     print(f"   总耗时: {total_elapsed:.2f}秒")
+    print(f"   速度: {speed:.2f} 个/秒")
+    print("=" * 70)
 
     return success_count > 0
 
@@ -1048,10 +1086,11 @@ def generate_ai_analysis_report(
         if len(trend_analysis) > 200:
             print(f"   预览: {trend_analysis[:200]}...")
 
-    # ==================== 第二部分：详细分类总结 ====================
+    # ==================== 并行生成两部分分析 ====================
     print()
-    print("📝 生成第二部分：视频内容详细分析...")
+    print("⚡ 并行生成两部分分析...")
 
+    # 准备第二部分的prompt（在并行前构建）
     # 检查字幕文件
     subtitle_files = list(subtitle_dir.glob("*.srt")) if subtitle_dir.exists() else []
     has_subtitles = len(subtitle_files) > 0
@@ -1129,10 +1168,44 @@ def generate_ai_analysis_report(
 
     detail_prompt += "- **推荐批次**: 第X次刷新\n"
 
-    # 生成第二部分（带重试）
-    print("   调用 Gemini API...")
-    detail_result = gemini_client.generate_content(detail_prompt)
+    # 创建异步函数并行执行两次API调用
+    async def generate_both_parts():
+        """并行生成两部分分析"""
+        import asyncio as _asyncio
 
+        async def get_trend():
+            return gemini_client.generate_content(trend_prompt)
+
+        async def get_detail():
+            return gemini_client.generate_content(detail_prompt)
+
+        # 并行执行
+        results = await _asyncio.gather(get_trend(), get_detail(), return_exceptions=True)
+        return results
+
+    # 执行并行调用
+    print("   调用 Gemini API (并行处理趋势+详细分析)...")
+    results = asyncio.run(generate_both_parts())
+    trend_result = results[0] if not isinstance(results[0], Exception) else {'success': False, 'error': str(results[0])}
+    detail_result = results[1] if not isinstance(results[1], Exception) else {'success': False, 'error': str(results[1])}
+
+    # 处理趋势分析结果
+    if not trend_result['success']:
+        retries = trend_result.get('retries', 1)
+        print(f"❌ 推送趋势分析生成失败 (已重试{retries}次): {trend_result.get('error', 'Unknown error')[:150]}")
+        print("   📊 使用基础统计分析...")
+        # 生成基础统计作为第一部分
+        trend_analysis, _ = generate_fallback_analysis(videos, batch_stats)
+        trend_analysis = "## ⚠️ 注意：由于网络问题，AI分析暂时不可用，以下为基础统计分析\n\n" + trend_analysis
+    else:
+        trend_analysis = trend_result['text']
+        print("✅ 推送趋势分析完成")
+        # 显示预览
+        if len(trend_analysis) > 200:
+            print(f"   预览: {trend_analysis[:200]}...")
+
+    # 处理详细分析结果
+    print()
     if not detail_result['success']:
         retries = detail_result.get('retries', 1)
         print(f"❌ 详细分类分析生成失败 (已重试{retries}次): {detail_result.get('error', 'Unknown error')[:150]}")

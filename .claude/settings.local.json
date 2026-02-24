@@ -3,7 +3,9 @@
     "allow": [
       "Bash(python:*)",
       "Bash(E:/Anaconda/envs/bilisub/python.exe:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(输出 1,069)",
+      "Bash(conda run:*)"
     ],
     "deny": [],
     "ask": []

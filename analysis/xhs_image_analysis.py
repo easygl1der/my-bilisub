@@ -2,13 +2,15 @@
 """
 小红书图文笔记分析工具
 
-功能：
-1. 从本地图片文件夹分析小红书图文笔记
-2. 自动识别内容风格类型
-3. 针对不同风格使用专门的分析提示词
-4. 输出结构化的知识库笔记
+🌟 主要功能：
+1. **从URL直接下载并分析**：支持直接输入小红书笔记链接，自动下载图片和文案并分析
+2. **本地图片分析**：从本地图片文件夹分析小红书图文笔记
+3. **自动识别内容风格**：智能检测内容风格类型（10种预设风格）
+4. **专门分析提示词**：针对不同风格使用定制化的分析模板
+5. **批量处理**：支持批量分析用户的所有笔记
+6. **GitHub图片上传**：可选将分析中的图片上传至GitHub并使用CDN链接
 
-支持的内容风格类型：
+📋 支持的内容风格类型：
 - life_vlog: 生活记录/日常分享
 - quote_wisdom: 纯文字/金句/人生道理
 - news_info: 新闻资讯/知识科普
@@ -17,22 +19,52 @@
 - travel_guide: 旅行攻略/景点推荐
 - tech_review: 数码测评/产品评测
 - study_notes: 学习笔记/干货教程
+- fitness: 健身运动/减肥塑形
+- emotional: 情感关系/恋爱心理
 
-使用示例:
-    # 分析本地图片文件夹
-    python xhs_image_analysis.py --dir "xhs_images/用户名/笔记标题"
+💡 使用示例:
 
-    # 指定内容风格
-    python xhs_image_analysis.py --dir "images" --style quote_wisdom
+1. **从URL直接下载并分析（推荐）**：
+   python xhs_image_analysis.py --url "小红书笔记完整链接"
 
-    # 自动识别风格（默认）
-    python xhs_image_analysis.py --dir "images" --auto-style
+2. **分析本地图片文件夹**：
+   python xhs_image_analysis.py --dir "xhs_images/用户名/笔记标题"
 
-    # 批量分析用户的所有笔记
-    python xhs_image_analysis.py --user-dir "xhs_images/塑料叉FOKU"
+3. **指定内容风格**：
+   python xhs_image_analysis.py --dir "images" --style quote_wisdom
 
-    # 读取文案文件
-    python xhs_image_analysis.py --dir "images" --text-file "content.txt"
+4. **自动识别风格（默认）**：
+   python xhs_image_analysis.py --dir "images" --auto-style
+
+5. **批量分析用户的所有笔记**：
+   python xhs_image_analysis.py --user-dir "xhs_images/塑料叉FOKU"
+
+6. **读取指定文案文件**：
+   python xhs_image_analysis.py --dir "images" --text-file "my_content.txt"
+
+7. **使用不同的模型**：
+   python xhs_image_analysis.py --url "笔记链接" --model flash
+
+8. **上传图片到 GitHub CDN**：
+   python xhs_image_analysis.py --url "笔记链接" --upload-github
+
+9. **只下载不分析**：
+   python xhs_image_analysis.py --url "笔记链接" --download-only
+
+🔧 配置说明：
+- API Key 支持三种方式配置：
+  1. config/bot_config.json 中的 gemini_api_key
+  2. 环境变量 GEMINI_API_KEY
+  3. config_api.py 中的 API_CONFIG
+- GitHub 上传需要配置 GITHUB_TOKEN 和 GITHUB_REPO 环境变量
+
+⚡ 特性：
+- 支持多种图片格式：jpg、png、webp、gif、bmp
+- 自动去除重复图片
+- 生成详细的图片描述
+- 支持 Markdown 格式输出
+- Token 使用统计
+- 错误重试机制
 """
 
 import os
@@ -1716,10 +1748,24 @@ STYLE_DETECTION_PROMPT = """请分析以下图文笔记的内容，判断它属�
 
 def get_api_key() -> str:
     """获取 Gemini API Key"""
+    # 1. 优先从 bot_config.json 读取
+    try:
+        config_path = Path(__file__).parent.parent / 'config' / 'bot_config.json'
+        if config_path.exists():
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+                api_key = config.get('gemini_api_key')
+                if api_key:
+                    return api_key
+    except Exception:
+        pass
+
+    # 2. 从环境变量读取
     api_key = os.environ.get('GEMINI_API_KEY')
     if api_key:
         return api_key
 
+    # 3. 从 config_api.py 读取
     try:
         sys.path.insert(0, str(Path(__file__).parent.parent))
         from config_api import API_CONFIG

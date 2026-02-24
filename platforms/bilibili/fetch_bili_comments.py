@@ -36,21 +36,40 @@ except ImportError:
 # ============================================================================
 
 # B站 Cookie - 从 config/cookies.txt 统一读取
+BILI_COOKIE = ""
 try:
     import sys
     from pathlib import Path
-    # 添加 bots 目录到路径以导入 cookie_manager
-    sys.path.insert(0, str(Path(__file__).parent.parent / "bots"))
-    from cookie_manager import get_cookie, check_cookie
-    if check_cookie('bilibili'):
-        BILI_COOKIE = get_cookie('bilibili', 'string')
+
+    # 添加 platforms/bilibili 目录到路径以导入 cookie_manager
+    sys.path.insert(0, str(Path(__file__).parent))
+    # 添加 config 目录到路径
+    sys.path.insert(0, str(Path(__file__).parent.parent / "config"))
+
+    # 简化Cookie读取逻辑
+    cookie_file = Path(__file__).parent.parent / "config" / "cookies.txt"
+    if cookie_file.exists():
+        with open(cookie_file, 'r', encoding='utf-8') as f:
+            content = f.read()
+        # 查找bili相关的Cookie
+        for line in content.split('\n'):
+            if line.startswith('[bilibili]') or 'bilibili' in line.lower():
+                parts = line.split('=', 1)
+                if len(parts) == 2:
+                    BILI_COOKIE += parts[0].strip() + '=' + parts[1].strip() + '; '
+                # 如果找到bili部分，开始提取
+                if line.strip() == '[bilibili]':
+                    continue
+                break
+        BILI_COOKIE = BILI_COOKIE.rstrip('; ')
+
+    if not BILI_COOKIE:
+        print("⚠️ B站 Cookie 未配置，请在 config/cookies.txt 中添加 [bilibili] 部分")
     else:
-        BILI_COOKIE = ""
-        print("⚠️ B站 Cookie 未配置，请在 config/cookies.txt 中添加")
-except (ImportError, AttributeError) as e:
-    # 如果 cookie_manager 不可用，使用默认值
-    BILI_COOKIE = ""
-    print(f"⚠️ 无法加载 Cookie 管理器: {e}")
+        print("✅ 已加载 B站 Cookie")
+
+except Exception as e:
+    print(f"⚠️ 无法读取 Cookie 文件: {e}")
 
 # 输出目录
 OUTPUT_DIR = "bili_comments_output"
@@ -132,6 +151,7 @@ def get_headers():
         'Sec-Fetch-Mode': 'cors',
         'Sec-Fetch-Site': 'same-site',
         'Cookie': BILI_COOKIE,
+        'x-requested-with': 'fetch',
     }
 
 
@@ -192,7 +212,6 @@ class BiliCommentClient:
             'type': 1,
             'oid': oid,
             'mode': 3,  # 按热门排序
-            'pagination_str': '{"offset":""}',
             'ps': PAGE_SIZE,
             'pn': page,
         }
@@ -204,6 +223,8 @@ class BiliCommentClient:
 
             if data.get('code') == 0:
                 replies = data.get('data', {}).get('replies', [])
+                if replies is None:
+                    replies = []
                 return self._parse_comments(replies)
             else:
                 print(f"   ⚠️  API 错误: {data.get('message', '未知错误')}")
@@ -220,7 +241,11 @@ class BiliCommentClient:
         for reply in replies:
             try:
                 member = reply.get("member", {})
+                if member is None:
+                    member = {}
                 content = reply.get("content", {})
+                if content is None:
+                    content = {}
                 like_count = reply.get("like", 0)
 
                 parsed.append({

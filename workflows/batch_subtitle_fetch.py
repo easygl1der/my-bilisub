@@ -175,7 +175,7 @@ def write_csv_status(csv_path: Path, videos: list):
         writer.writerows(videos)
 
 
-def generate_summary_md(videos: list, author_name: str, output_dir: Path, total_elapsed: float) -> Path:
+def generate_summary_md(videos: list, author_name: str, output_dir: Path, total_elapsed: float, csv_path: Path = None) -> Path:
     """生成汇总 MD 文件"""
     md_path = output_dir / f"{author_name}_汇总.md"
 
@@ -222,7 +222,10 @@ def generate_summary_md(videos: list, author_name: str, output_dir: Path, total_
 
         if fallback_needed_count > 0:
             f.write(f"- 🎬 需要视频分析备选方案: {fallback_needed_count}\n")
-            f.write(f"\n💡 提示: 可以运行 `python utils/auto_bili_workflow.py --csv \"{csv_path.name}\" --enable-fallback` 来处理无字幕视频\n")
+            if csv_path:
+                f.write(f"\n💡 提示: 可以运行 `python workflows/auto_bili_workflow.py --csv \"{csv_path.name}\" --enable-fallback` 来处理无字幕视频\n")
+            else:
+                f.write(f"\n💡 提示: 可以运行 `python workflows/auto_bili_workflow.py --csv \"your_csv_file.csv\" --enable-fallback` 来处理无字幕视频\n")
 
         # 失败列表
         failed_videos = [v for v in videos if v.get('subtitle_status') == 'failed']
@@ -345,7 +348,7 @@ async def process_batch(csv_path: str, limit: int = None, force: bool = False):
     total_elapsed = time.time() - total_start_time
 
     # 生成 MD 汇总文件
-    md_path = generate_summary_md(videos, author_name, SUBTITLE_OUTPUT_DIR, total_elapsed)
+    md_path = generate_summary_md(videos, author_name, SUBTITLE_OUTPUT_DIR, total_elapsed, csv_path)
 
     print("\n" + "=" * 60)
     print(f"批量处理完成!")
