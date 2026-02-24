@@ -94,34 +94,40 @@ async def search_xhs(keyword: str, headless: bool = False):
     page = await context.new_page()
     print("✅ 浏览器已启动\n")
 
-    # 访问小红书主页
-    print("📄 访问小红书主页...")
-    try:
-        await page.goto('https://www.xiaohongshu.com/', wait_until='domcontentloaded', timeout=60000)
-        await asyncio.sleep(3)
-
-        # 检查登录状态
-        page_content = await page.content()
-        if '登录' in page_content and '注册' in page_content:
-            print("⚠️  检测到未登录状态")
-            print("💡 请手动登录或更新Cookie\n")
-            if not headless:
-                print("⏳ 等待30秒供手动登录...")
-                await asyncio.sleep(30)
-        else:
-            print("✅ 已登录\n")
-    except Exception as e:
-        print(f"⚠️  主页加载问题: {e}\n")
-
-    # 访问搜索页面
+    # 访问搜索页面（直接访问，不需要先访问主页）
     search_url = f"https://www.xiaohongshu.com/search_result?keyword={keyword}&type=51"
     print(f"🔍 访问搜索页面: {search_url}")
     try:
-        await page.goto(search_url, wait_until='domcontentloaded', timeout=60000)
-        await asyncio.sleep(5)
+        await page.goto(search_url, wait_until='networkidle', timeout=45000)
+        await asyncio.sleep(3)
         print("✅ 搜索页面加载完成\n")
     except Exception as e:
         print(f"⚠️  搜索页面加载问题: {e}\n")
+
+    # 检查登录状态（增加重试）
+    page_content = None
+    for retry in range(3):
+        try:
+            page_content = await page.content()
+            break
+        except Exception as e:
+            print(f"⚠️  获取页面内容失败，重试 {retry+1}/3: {e}")
+            await asyncio.sleep(1)
+
+    if not page_content:
+        print("❌ 无法获取页面内容")
+        await browser.close()
+        await playwright.stop()
+        return
+
+    if '登录' in page_content and '注册' in page_content:
+        print("⚠️  检测到未登录状态")
+        print("💡 请手动登录或更新Cookie\n")
+        if not headless:
+            print("⏳ 等待30秒供手动登录...")
+            await asyncio.sleep(30)
+    else:
+        print("✅ 已登录\n")
 
     # 获取页面标题
     title = await page.title()
@@ -148,68 +154,196 @@ async def search_xhs(keyword: str, headless: bool = False):
         () => {
             const result = [];
 
-            // 查找所有带 xsec_token 的链接
+            // 查找所有带 xsec_token 的链接，但排除用户链接
             const allLinks = document.querySelectorAll('a[href*="xsec_token"]');
 
-            console.log('找到的所有带xsec_token的链接数量:', allLinks.length);
-
             allLinks.forEach(a => {
-                result.push({
-                    href: a.href,
-                    text: a.textContent?.substring(0, 50) || ''
-                });
+                const href = a.href;
+
+                // 排除用户链接
+                if (href.includes('/user/profile/')) {
+                    return;
+                }
+
+                // 只保留笔记链接
+                if (href.includes('/search_result/') || href.includes('/explore/')) {
+                    // 从父元素获取标题
+                    let title = '';
+                    let author = '';
+                    let likes = '';
+
+                    const card = a.closest('section, article, [class*="note"], [class*="card"], div[class*="item"]');
+                    if (card) {
+                        // 获取标题
+                        const textNodes = card.querySelectorAll('span, div, p, h1, h2, h3');
+                        for (const node of textNodes) {
+                            const text = node.textContent?.trim();
+                            if (text && text.length > 3 && text.length < 100 && !/^\\d+$/.test(text)) {
+                                if (!text.includes('赞') && !text.includes('关注') &&
+                                    !text.includes('分享') && !text.includes('收藏')) {
+                                    title = text.substring(0, 100);
+                                    break;
+                                }
+                            }
+                        }
+
+                        // 获取作者
+                        const authorNodes = card.querySelectorAll('span, a');
+                        for (const node of authorNodes) {
+                            const text = node.textContent?.trim();
+                            if (text && text.length > 1 && text.length < 30) {
+                                if (!/\\d/.test(text)) {
+                                    author = text;
+                                    break;
+                                }
+                            }
+                        }
+
+                        // 获取点赞数
+                        const allNodes = card.querySelectorAll('*');
+                        for (const node of allNodes) {
+                            const text = node.textContent?.trim();
+                            if (text && /^\\d+/.test(text)) {
+                                const parentClass = node.parentElement?.className || '';
+                                if (parentClass.includes('like') || parentClass.includes('count') ||
+                                    parentClass.includes('interact')) {
+                                    const num = parseInt(text);
+                                    if (num < 1000000 && num > 0) {
+                                        likes = text;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    result.push({
+                        href: href,
+                        title: title || '无标题',
+                        author: author || '未知作者',
+                        likes: likes || '0'
+                    });
+                }
             });
 
             return result;
         }
     ''')
 
-    print(f"   找到 {len(links)} 个链接\n")
+    print(f"   找到 {len(links)} 个笔记链接\n")
 
     if links:
-        print("📋 前5个链接:")
+        print(f"📋 前5个笔记:")
         for i, link in enumerate(links[:5], 1):
-            print(f"   {i}. {link['href']}")
-            print(f"      文本: {link['text'][:50]}...")
+            print(f"   {i}. {link['title']}")
+            print(f"      作者: {link['author']}")
+            print(f"      点赞: {link['likes']}")
+            print(f"      链接: {link['href'][:80]}...")
 
     # 滚动加载更多内容
     print("\n📜 滚动加载更多内容...")
-    for i in range(3):
+    for i in range(2):
         try:
-            await asyncio.sleep(2)
+            await asyncio.sleep(1)
             await page.evaluate('window.scrollBy(0, window.innerHeight)')
-            print(f"   滚动 {i+1}/3")
+            print(f"   滚动 {i+1}/2")
         except Exception as e:
             print(f"   滚动失败: {e}")
             break
 
-    await asyncio.sleep(3)
+    await asyncio.sleep(2)
 
     # 再次查找链接
     print("\n🔍 滚动后再次查找笔记链接...")
     links_after_scroll = await page.evaluate('''
         () => {
             const result = [];
+
+            // 查找所有带 xsec_token 的链接，但排除用户链接
             const allLinks = document.querySelectorAll('a[href*="xsec_token"]');
 
             allLinks.forEach(a => {
-                result.push({
-                    href: a.href,
-                    text: a.textContent?.substring(0, 50) || ''
-                });
+                const href = a.href;
+
+                // 排除用户链接
+                if (href.includes('/user/profile/')) {
+                    return;
+                }
+
+                // 只保留笔记链接
+                if (href.includes('/search_result/') || href.includes('/explore/')) {
+                    // 从父元素获取标题
+                    let title = '';
+                    let author = '';
+                    let likes = '';
+
+                    const card = a.closest('section, article, [class*="note"], [class*="card"], div[class*="item"]');
+                    if (card) {
+                        // 获取标题
+                        const textNodes = card.querySelectorAll('span, div, p, h1, h2, h3');
+                        for (const node of textNodes) {
+                            const text = node.textContent?.trim();
+                            if (text && text.length > 3 && text.length < 100 && !/^\\d+$/.test(text)) {
+                                if (!text.includes('赞') && !text.includes('关注') &&
+                                    !text.includes('分享') && !text.includes('收藏')) {
+                                    title = text.substring(0, 100);
+                                    break;
+                                }
+                            }
+                        }
+
+                        // 获取作者
+                        const authorNodes = card.querySelectorAll('span, a');
+                        for (const node of authorNodes) {
+                            const text = node.textContent?.trim();
+                            if (text && text.length > 1 && text.length < 30) {
+                                if (!/\\d/.test(text)) {
+                                    author = text;
+                                    break;
+                                }
+                            }
+                        }
+
+                        // 获取点赞数
+                        const allNodes = card.querySelectorAll('*');
+                        for (const node of allNodes) {
+                            const text = node.textContent?.trim();
+                            if (text && /^\\d+/.test(text)) {
+                                const parentClass = node.parentElement?.className || '';
+                                if (parentClass.includes('like') || parentClass.includes('count') ||
+                                    parentClass.includes('interact')) {
+                                    const num = parseInt(text);
+                                    if (num < 1000000 && num > 0) {
+                                        likes = text;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    result.push({
+                        href: href,
+                        title: title || '无标题',
+                        author: author || '未知作者',
+                        likes: likes || '0'
+                    });
+                }
             });
 
             return result;
         }
     ''')
 
-    print(f"   找到 {len(links_after_scroll)} 个链接\n")
+    print(f"   找到 {len(links_after_scroll)} 个笔记链接\n")
 
     if links_after_scroll:
-        print("📋 前5个链接:")
-        for i, link in enumerate(links_after_scroll[:5], 1):
-            print(f"   {i}. {link['href']}")
-            print(f"      文本: {link['text'][:50]}...")
+        print(f"📋 找到的所有 {len(links_after_scroll)} 个笔记:")
+        for i, link in enumerate(links_after_scroll, 1):
+            print(f"   {i}. {link['title']}")
+            print(f"      作者: {link['author']}")
+            print(f"      点赞: {link['likes']}")
+            print(f"      链接: {link['href']}")
 
     # 保存页面HTML用于调试
     output_dir = PROJECT_DIR / "output" / "xhs_search_test"
@@ -225,8 +359,8 @@ async def search_xhs(keyword: str, headless: bool = False):
 
     # 保持浏览器打开（如果不是无头模式）
     if not headless:
-        print("\n⏳ 浏览器将保持打开60秒，请查看页面内容...")
-        await asyncio.sleep(60)
+        print("\n⏳ 浏览器将保持打开30秒，请查看页面内容...")
+        await asyncio.sleep(30)
 
     # 关闭浏览器
     await browser.close()

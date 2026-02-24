@@ -233,12 +233,21 @@ class XHSSearcher:
         """
         print(f"\n🔍 搜索关键词: {keyword}")
 
-        # 先访问小红书主页确保登录状态
+        # 先访问小红书主页确保登录状态和Cookie生效
         try:
-            await self.browser.page.goto('https://www.xiaohongshu.com/', wait_until='domcontentloaded', timeout=60000)
+            await self.browser.page.goto('https://www.xiaohongshu.com/', wait_until='domcontentloaded', timeout=30000)
             await asyncio.sleep(2)
         except Exception as e:
             print(f"⚠️  主页加载问题: {e}")
+
+        # 构造搜索URL
+        search_url = f"https://www.xiaohongshu.com/search_result?keyword={keyword}&type=51"
+
+        try:
+            await self.browser.page.goto(search_url, wait_until='networkidle', timeout=45000)
+            await asyncio.sleep(3)
+        except Exception as e:
+            print(f"⚠️  搜索页面加载问题: {e}")
             return []
 
         # 检查登录状态
@@ -246,34 +255,17 @@ class XHSSearcher:
             print("⚠️  检测到未登录状态")
             return []
 
-        # 构造搜索URL
-        search_url = f"https://www.xiaohongshu.com/search_result?keyword={keyword}&type=51"
-
-        try:
-            await self.browser.page.goto(search_url, wait_until='domcontentloaded', timeout=60000)
-            await asyncio.sleep(3)
-        except Exception as e:
-            print(f"⚠️  搜索页面加载问题: {e}")
-            return []
-
         # 滚动加载更多内容
-        try:
-            # 等待页面完全加载
-            await self.browser.page.wait_for_load_state('networkidle', timeout=10000)
-        except:
-            pass  # 忽略超时，继续执行
-
-        # 滚动加载更多内容
-        for i in range(5):
+        for i in range(2):
             try:
                 await asyncio.sleep(1)
                 await self.browser.page.evaluate('window.scrollBy(0, window.innerHeight)')
-                print(f"    滚动加载 {i+1}/5")
+                print(f"    滚动加载 {i+1}/2")
             except Exception as e:
                 print(f"⚠️  滚动失败: {e}")
                 break
 
-        await asyncio.sleep(3)
+        await asyncio.sleep(2)
 
         # 提取搜索结果
         notes = await self.browser.page.evaluate('''
@@ -281,15 +273,21 @@ class XHSSearcher:
                 const notes = [];
                 const seen = new Set();
 
-                // 查找所有笔记卡片
-                const cards = document.querySelectorAll('section, article, [class*="note"], [class*="card"], div[class*="item"]');
+                // 查找所有带 xsec_token 的链接
+                const allLinks = document.querySelectorAll('a[href*="xsec_token"]');
 
-                cards.forEach(card => {
-                    // 查找带 xsec_token 的链接
-                    const link = card.querySelector('a[href*="xsec_token"]');
-                    if (!link) return;
+                allLinks.forEach(a => {
+                    const url = a.href;
 
-                    const url = link.href;
+                    // 排除用户链接
+                    if (url.includes('/user/profile/')) {
+                        return;
+                    }
+
+                    // 只保留笔记链接
+                    if (!url.includes('/search_result/') && !url.includes('/explore/')) {
+                        return;
+                    }
 
                     // 从 URL 中提取 xsec_token 和 xsec_source
                     let xsecToken = '';
@@ -305,11 +303,11 @@ class XHSSearcher:
 
                     // 提取笔记ID
                     let noteId = "";
-                    if (url.includes('/explore/')) {
-                        const idMatch = url.match(/\\/explore\\/([a-f0-9]{24})/);
+                    if (url.includes('/search_result/')) {
+                        const idMatch = url.match(/\\/search_result\\/([a-f0-9]{24})/);
                         if (idMatch) noteId = idMatch[1];
-                    } else if (url.includes('/discovery/item/')) {
-                        const idMatch = url.match(/\\/discovery\\/item\\/([a-f0-9]{24})/);
+                    } else if (url.includes('/explore/')) {
+                        const idMatch = url.match(/\\/explore\\/([a-f0-9]{24})/);
                         if (idMatch) noteId = idMatch[1];
                     }
 
@@ -317,53 +315,51 @@ class XHSSearcher:
                     if (seen.has(noteId)) return;
                     seen.add(noteId);
 
-                    // 获取标题
+                    // 从卡片获取标题、作者、点赞数
                     let title = "无标题";
-                    const textNodes = card.querySelectorAll('span, div, p, h1, h2, h3');
-                    for (const node of textNodes) {
-                        const text = node.textContent?.trim();
-                        if (text && text.length > 3 && text.length < 100 && !/^\\d+$/.test(text)) {
-                            if (!text.includes('赞') && !text.includes('关注') &&
-                                !text.includes('分享') && !text.includes('收藏')) {
-                                title = text.substring(0, 100);
-                                break;
-                            }
-                        }
-                    }
-
-                    if (title === "无标题") {
-                        const linkTitle = link.getAttribute('title');
-                        if (linkTitle && linkTitle.length > 3) {
-                            title = linkTitle.substring(0, 100);
-                        }
-                    }
-
-                    // 获取作者
                     let author = "未知作者";
-                    const authorNodes = card.querySelectorAll('span, a');
-                    for (const node of authorNodes) {
-                        const text = node.textContent?.trim();
-                        if (text && text.length > 1 && text.length < 30) {
-                            if (!/\\d/.test(text)) {
-                                author = text;
-                                break;
+                    let likes = "0";
+
+                    const card = a.closest('section, article, [class*="note"], [class*="card"], div[class*="item"]');
+                    if (card) {
+                        // 获取标题
+                        const textNodes = card.querySelectorAll('span, div, p, h1, h2, h3');
+                        for (const node of textNodes) {
+                            const text = node.textContent?.trim();
+                            if (text && text.length > 3 && text.length < 100 && !/^\\d+$/.test(text)) {
+                                if (!text.includes('赞') && !text.includes('关注') &&
+                                    !text.includes('分享') && !text.includes('收藏')) {
+                                    title = text.substring(0, 100);
+                                    break;
+                                }
                             }
                         }
-                    }
 
-                    // 获取点赞数
-                    let likes = "0";
-                    const allNodes = card.querySelectorAll('*');
-                    for (const node of allNodes) {
-                        const text = node.textContent?.trim();
-                        if (text && /^\\d+/.test(text)) {
-                            const parentClass = node.parentElement?.className || '';
-                            if (parentClass.includes('like') || parentClass.includes('count') ||
-                                parentClass.includes('interact')) {
-                                const num = parseInt(text);
-                                if (num < 1000000 && num > 0) {
-                                    likes = text;
+                        // 获取作者
+                        const authorNodes = card.querySelectorAll('span, a');
+                        for (const node of authorNodes) {
+                            const text = node.textContent?.trim();
+                            if (text && text.length > 1 && text.length < 30) {
+                                if (!/\\d/.test(text)) {
+                                    author = text;
                                     break;
+                                }
+                            }
+                        }
+
+                        // 获取点赞数
+                        const allNodes = card.querySelectorAll('*');
+                        for (const node of allNodes) {
+                            const text = node.textContent?.trim();
+                            if (text && /^\\d+/.test(text)) {
+                                const parentClass = node.parentElement?.className || '';
+                                if (parentClass.includes('like') || parentClass.includes('count') ||
+                                    parentClass.includes('interact')) {
+                                    const num = parseInt(text);
+                                    if (num < 1000000 && num > 0) {
+                                        likes = text;
+                                        break;
+                                    }
                                 }
                             }
                         }
@@ -415,11 +411,10 @@ class XHSSearcher:
 
         # 先访问小红书主页确保登录状态
         try:
-            await self.browser.page.goto('https://www.xiaohongshu.com/', wait_until='domcontentloaded', timeout=60000)
+            await self.browser.page.goto('https://www.xiaohongshu.com/', wait_until='domcontentloaded', timeout=30000)
             await asyncio.sleep(2)
         except Exception as e:
             print(f"⚠️  主页加载问题: {e}")
-            return []
 
         # 检查登录状态
         if not await self.check_login_status():
@@ -430,30 +425,23 @@ class XHSSearcher:
         user_url = f"https://www.xiaohongshu.com/user/profile/{user_id}"
 
         try:
-            await self.browser.page.goto(user_url, wait_until='domcontentloaded', timeout=60000)
+            await self.browser.page.goto(user_url, wait_until='networkidle', timeout=45000)
             await asyncio.sleep(3)
         except Exception as e:
             print(f"⚠️  用户页面加载问题: {e}")
             return []
 
         # 滚动加载更多内容
-        try:
-            # 等待页面完全加载
-            await self.browser.page.wait_for_load_state('networkidle', timeout=10000)
-        except:
-            pass  # 忽略超时，继续执行
-
-        # 滚动加载更多内容
-        for i in range(5):
+        for i in range(2):
             try:
                 await asyncio.sleep(1)
                 await self.browser.page.evaluate('window.scrollBy(0, window.innerHeight)')
-                print(f"    滚动加载 {i+1}/5")
+                print(f"    滚动加载 {i+1}/2")
             except Exception as e:
                 print(f"⚠️  滚动失败: {e}")
                 break
 
-        await asyncio.sleep(3)
+        await asyncio.sleep(2)
 
         # 提取用户笔记
         notes = await self.browser.page.evaluate('''
@@ -461,13 +449,21 @@ class XHSSearcher:
                 const notes = [];
                 const seen = new Set();
 
-                const cards = document.querySelectorAll('section, article, [class*="note"], [class*="card"], div[class*="item"]');
+                // 查找所有带 xsec_token 的链接
+                const allLinks = document.querySelectorAll('a[href*="xsec_token"]');
 
-                cards.forEach(card => {
-                    const link = card.querySelector('a[href*="xsec_token"]');
-                    if (!link) return;
+                allLinks.forEach(a => {
+                    const url = a.href;
 
-                    const url = link.href;
+                    // 排除用户链接
+                    if (url.includes('/user/profile/')) {
+                        return;
+                    }
+
+                    // 只保留笔记链接
+                    if (!url.includes('/search_result/') && !url.includes('/explore/')) {
+                        return;
+                    }
 
                     let xsecToken = '';
                     let xsecSource = 'pc_user';
@@ -481,11 +477,11 @@ class XHSSearcher:
                     } catch (e) {}
 
                     let noteId = "";
-                    if (url.includes('/explore/')) {
-                        const idMatch = url.match(/\\/explore\\/([a-f0-9]{24})/);
+                    if (url.includes('/search_result/')) {
+                        const idMatch = url.match(/\\/search_result\\/([a-f0-9]{24})/);
                         if (idMatch) noteId = idMatch[1];
-                    } else if (url.includes('/discovery/item/')) {
-                        const idMatch = url.match(/\\/discovery\\/item\\/([a-f0-9]{24})/);
+                    } else if (url.includes('/explore/')) {
+                        const idMatch = url.match(/\\/explore\\/([a-f0-9]{24})/);
                         if (idMatch) noteId = idMatch[1];
                     }
 
@@ -494,42 +490,49 @@ class XHSSearcher:
                     seen.add(noteId);
 
                     let title = "无标题";
-                    const textNodes = card.querySelectorAll('span, div, p, h1, h2, h3');
-                    for (const node of textNodes) {
-                        const text = node.textContent?.trim();
-                        if (text && text.length > 3 && text.length < 100 && !/^\\d+$/.test(text)) {
-                            if (!text.includes('赞') && !text.includes('关注') &&
-                                !text.includes('分享') && !text.includes('收藏')) {
-                                title = text.substring(0, 100);
-                                break;
-                            }
-                        }
-                    }
-
                     let author = "未知作者";
-                    const authorNodes = card.querySelectorAll('span, a');
-                    for (const node of authorNodes) {
-                        const text = node.textContent?.trim();
-                        if (text && text.length > 1 && text.length < 30) {
-                            if (!/\\d/.test(text)) {
-                                author = text;
-                                break;
+                    let likes = "0";
+
+                    const card = a.closest('section, article, [class*="note"], [class*="card"], div[class*="item"]');
+                    if (card) {
+                        // 获取标题
+                        const textNodes = card.querySelectorAll('span, div, p, h1, h2, h3');
+                        for (const node of textNodes) {
+                            const text = node.textContent?.trim();
+                            if (text && text.length > 3 && text.length < 100 && !/^\\d+$/.test(text)) {
+                                if (!text.includes('赞') && !text.includes('关注') &&
+                                    !text.includes('分享') && !text.includes('收藏')) {
+                                    title = text.substring(0, 100);
+                                    break;
+                                }
                             }
                         }
-                    }
 
-                    let likes = "0";
-                    const allNodes = card.querySelectorAll('*');
-                    for (const node of allNodes) {
-                        const text = node.textContent?.trim();
-                        if (text && /^\\d+/.test(text)) {
-                            const parentClass = node.parentElement?.className || '';
-                            if (parentClass.includes('like') || parentClass.includes('count') ||
-                                parentClass.includes('interact')) {
-                                const num = parseInt(text);
-                                if (num < 1000000 && num > 0) {
-                                    likes = text;
+                        // 获取作者
+                        const authorNodes = card.querySelectorAll('span, a');
+                        for (const node of authorNodes) {
+                            const text = node.textContent?.trim();
+                            if (text && text.length > 1 && text.length < 30) {
+                                if (!/\\d/.test(text)) {
+                                    author = text;
                                     break;
+                                }
+                            }
+                        }
+
+                        // 获取点赞数
+                        const allNodes = card.querySelectorAll('*');
+                        for (const node of allNodes) {
+                            const text = node.textContent?.trim();
+                            if (text && /^\\d+/.test(text)) {
+                                const parentClass = node.parentElement?.className || '';
+                                if (parentClass.includes('like') || parentClass.includes('count') ||
+                                    parentClass.includes('interact')) {
+                                    const num = parseInt(text);
+                                    if (num < 1000000 && num > 0) {
+                                        likes = text;
+                                        break;
+                                    }
                                 }
                             }
                         }
@@ -580,11 +583,10 @@ class XHSSearcher:
 
         # 先访问小红书主页确保登录状态
         try:
-            await self.browser.page.goto('https://www.xiaohongshu.com/', wait_until='domcontentloaded', timeout=60000)
+            await self.browser.page.goto('https://www.xiaohongshu.com/', wait_until='domcontentloaded', timeout=30000)
             await asyncio.sleep(2)
         except Exception as e:
             print(f"⚠️  主页加载问题: {e}")
-            return []
 
         # 检查登录状态
         if not await self.check_login_status():
@@ -595,30 +597,23 @@ class XHSSearcher:
         search_url = f"https://www.xiaohongshu.com/search_result?keyword={tag}&type=51"
 
         try:
-            await self.browser.page.goto(search_url, wait_until='domcontentloaded', timeout=60000)
+            await self.browser.page.goto(search_url, wait_until='networkidle', timeout=45000)
             await asyncio.sleep(3)
         except Exception as e:
             print(f"⚠️  搜索页面加载问题: {e}")
             return []
 
         # 滚动加载更多内容
-        try:
-            # 等待页面完全加载
-            await self.browser.page.wait_for_load_state('networkidle', timeout=10000)
-        except:
-            pass  # 忽略超时，继续执行
-
-        # 滚动加载更多内容
-        for i in range(5):
+        for i in range(2):
             try:
                 await asyncio.sleep(1)
                 await self.browser.page.evaluate('window.scrollBy(0, window.innerHeight)')
-                print(f"    滚动加载 {i+1}/5")
+                print(f"    滚动加载 {i+1}/2")
             except Exception as e:
                 print(f"⚠️  滚动失败: {e}")
                 break
 
-        await asyncio.sleep(3)
+        await asyncio.sleep(2)
 
         # 提取搜索结果
         notes = await self.browser.page.evaluate('''
@@ -626,13 +621,21 @@ class XHSSearcher:
                 const notes = [];
                 const seen = new Set();
 
-                const cards = document.querySelectorAll('section, article, [class*="note"], [class*="card"], div[class*="item"]');
+                // 查找所有带 xsec_token 的链接
+                const allLinks = document.querySelectorAll('a[href*="xsec_token"]');
 
-                cards.forEach(card => {
-                    const link = card.querySelector('a[href*="xsec_token"]');
-                    if (!link) return;
+                allLinks.forEach(a => {
+                    const url = a.href;
 
-                    const url = link.href;
+                    // 排除用户链接
+                    if (url.includes('/user/profile/')) {
+                        return;
+                    }
+
+                    // 只保留笔记链接
+                    if (!url.includes('/search_result/') && !url.includes('/explore/')) {
+                        return;
+                    }
 
                     let xsecToken = '';
                     let xsecSource = 'pc_tag';
@@ -646,11 +649,11 @@ class XHSSearcher:
                     } catch (e) {}
 
                     let noteId = "";
-                    if (url.includes('/explore/')) {
-                        const idMatch = url.match(/\\/explore\\/([a-f0-9]{24})/);
+                    if (url.includes('/search_result/')) {
+                        const idMatch = url.match(/\\/search_result\\/([a-f0-9]{24})/);
                         if (idMatch) noteId = idMatch[1];
-                    } else if (url.includes('/discovery/item/')) {
-                        const idMatch = url.match(/\\/discovery\\/item\\/([a-f0-9]{24})/);
+                    } else if (url.includes('/explore/')) {
+                        const idMatch = url.match(/\\/explore\\/([a-f0-9]{24})/);
                         if (idMatch) noteId = idMatch[1];
                     }
 
@@ -659,49 +662,49 @@ class XHSSearcher:
                     seen.add(noteId);
 
                     let title = "无标题";
-                    const textNodes = card.querySelectorAll('span, div, p, h1, h2, h3');
-                    for (const node of textNodes) {
-                        const text = node.textContent?.trim();
-                        if (text && text.length > 3 && text.length < 100 && !/^\\d+$/.test(text)) {
-                            if (!text.includes('赞') && !text.includes('关注') &&
-                                !text.includes('分享') && !text.includes('收藏')) {
-                                title = text.substring(0, 100);
-                                break;
-                            }
-                        }
-                    }
-
-                    if (title === "无标题") {
-                        const linkTitle = link.getAttribute('title');
-                        if (linkTitle && linkTitle.length > 3) {
-                            title = linkTitle.substring(0, 100);
-                        }
-                    }
-
                     let author = "未知作者";
-                    const authorNodes = card.querySelectorAll('span, a');
-                    for (const node of authorNodes) {
-                        const text = node.textContent?.trim();
-                        if (text && text.length > 1 && text.length < 30) {
-                            if (!/\\d/.test(text)) {
-                                author = text;
-                                break;
+                    let likes = "0";
+
+                    const card = a.closest('section, article, [class*="note"], [class*="card"], div[class*="item"]');
+                    if (card) {
+                        // 获取标题
+                        const textNodes = card.querySelectorAll('span, div, p, h1, h2, h3');
+                        for (const node of textNodes) {
+                            const text = node.textContent?.trim();
+                            if (text && text.length > 3 && text.length < 100 && !/^\\d+$/.test(text)) {
+                                if (!text.includes('赞') && !text.includes('关注') &&
+                                    !text.includes('分享') && !text.includes('收藏')) {
+                                    title = text.substring(0, 100);
+                                    break;
+                                }
                             }
                         }
-                    }
 
-                    let likes = "0";
-                    const allNodes = card.querySelectorAll('*');
-                    for (const node of allNodes) {
-                        const text = node.textContent?.trim();
-                        if (text && /^\\d+/.test(text)) {
-                            const parentClass = node.parentElement?.className || '';
-                            if (parentClass.includes('like') || parentClass.includes('count') ||
-                                parentClass.includes('interact')) {
-                                const num = parseInt(text);
-                                if (num < 1000000 && num > 0) {
-                                    likes = text;
+                        // 获取作者
+                        const authorNodes = card.querySelectorAll('span, a');
+                        for (const node of authorNodes) {
+                            const text = node.textContent?.trim();
+                            if (text && text.length > 1 && text.length < 30) {
+                                if (!/\\d/.test(text)) {
+                                    author = text;
                                     break;
+                                }
+                            }
+                        }
+
+                        // 获取点赞数
+                        const allNodes = card.querySelectorAll('*');
+                        for (const node of allNodes) {
+                            const text = node.textContent?.trim();
+                            if (text && /^\\d+/.test(text)) {
+                                const parentClass = node.parentElement?.className || '';
+                                if (parentClass.includes('like') || parentClass.includes('count') ||
+                                    parentClass.includes('interact')) {
+                                    const num = parseInt(text);
+                                    if (num < 1000000 && num > 0) {
+                                        likes = text;
+                                        break;
+                                    }
                                 }
                             }
                         }
