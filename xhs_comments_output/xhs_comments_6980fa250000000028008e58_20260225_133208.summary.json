@@ -1,0 +1,34 @@
+{
+  "total_comments": 10,
+  "top_level_comments": 10,
+  "reply_comments": 0,
+  "unique_authors": 10,
+  "top_authors": [
+    {
+      "nickname": "Bo比",
+      "comment_count": 1,
+      "total_likes": 0
+    },
+    {
+      "nickname": "梦魇法师",
+      "comment_count": 1,
+      "total_likes": 0
+    },
+    {
+      "nickname": "许你千纸鹤",
+      "comment_count": 1,
+      "total_likes": 0
+    },
+    {
+      "nickname": "交出小鱼干",
+      "comment_count": 1,
+      "total_likes": 0
+    },
+    {
+      "nickname": "owenfirst",
+      "comment_count": 1,
+      "total_likes": 0
+    }
+  ],
+  "sample_reply_relations": []
+}

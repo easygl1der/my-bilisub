@@ -1,0 +1,423 @@
+{
+  "note_id": "699e557e000000001d024d0e",
+  "total_comments": 52,
+  "crawl_time": "2026-02-25 18:23:49",
+  "comments": [
+    {
+      "id": "comment-699e72f400000000310017df",
+      "nickname": "开发者.Meepo",
+      "content": "claude app 升级一下，电脑的 terminal 里面的命令行配置好 /remote-control 之后，最好在 claude 的对应会话里面跟它沟通一下，然后刷新手机端的 code 列表就出来了",
+      "like_count": 2,
+      "create_time": "6小时前河南",
+      "replies": [
+        {
+          "id": "comment_1",
+          "nickname": "开发者.Meepo",
+          "content": "claude app 升级一下，电脑的 terminal 里面的命令行配置好 /remote-control 之后，最好在 claude 的对应会话里面跟它沟通一下，然后刷新手机端的 code 列表就出来了",
+          "like_count": 2,
+          "create_time": "6小时前河南"
+        }
+      ]
+    },
+    {
+      "id": "comment-699e5f42000000001803b5cf",
+      "nickname": "Sibelius",
+      "content": "手机端怎么连接呢？我没找到能扫码的地方",
+      "like_count": 2,
+      "create_time": "7小时前加拿大",
+      "replies": [
+        {
+          "id": "comment_21",
+          "nickname": "Sibelius",
+          "content": "手机端怎么连接呢？我没找到能扫码的地方",
+          "like_count": 2,
+          "create_time": "7小时前加拿大"
+        }
+      ]
+    },
+    {
+      "id": "comment-699ea61000000000180209b8",
+      "nickname": "LeeXeo",
+      "content": "有没有第三方工具支持这个功能，便利api用户",
+      "like_count": 1,
+      "create_time": "2小时前上海",
+      "replies": [
+        {
+          "id": "comment_3",
+          "nickname": "LeeXeo",
+          "content": "有没有第三方工具支持这个功能，便利api用户",
+          "like_count": 1,
+          "create_time": "2小时前上海"
+        }
+      ]
+    },
+    {
+      "id": "comment-699e73e1000000000902016e",
+      "nickname": "whisper",
+      "content": "但是据说 手机端的 auth 和 cli 不一样。所有用了 app 更容易封，我之前连封 3 个 max 给我整的只敢用 cli 了，那种伪装 auth token 的也不敢用",
+      "like_count": 1,
+      "create_time": "6小时前湖南",
+      "replies": [
+        {
+          "id": "comment_9",
+          "nickname": "whisper",
+          "content": "但是据说 手机端的 auth 和 cli 不一样。所有用了 app 更容易封，我之前连封 3 个 max 给我整的只敢用 cli 了，那种伪装 auth token 的也不敢用",
+          "like_count": 1,
+          "create_time": "6小时前湖南"
+        }
+      ]
+    },
+    {
+      "id": "comment-699e602f000000003102ed89",
+      "nickname": "开发者.Meepo",
+      "content": "app 升级到最新，点进 code 之后，下拉会刷新就能看到了",
+      "like_count": 1,
+      "create_time": "7小时前河南",
+      "replies": [
+        {
+          "id": "comment_23",
+          "nickname": "开发者.Meepo",
+          "content": "app 升级到最新，点进 code 之后，下拉会刷新就能看到了",
+          "like_count": 1,
+          "create_time": "7小时前河南"
+        }
+      ]
+    },
+    {
+      "id": "comment-699e6ecd000000000c00a495",
+      "nickname": "Chuang",
+      "content": "回复 Chuang : 也可以啊",
+      "like_count": 1,
+      "create_time": "6小时前河南",
+      "replies": [
+        {
+          "id": "comment_29",
+          "nickname": "Chuang",
+          "content": "回复 Chuang : 也可以啊",
+          "like_count": 1,
+          "create_time": "6小时前河南"
+        }
+      ]
+    },
+    {
+      "id": "comment-699e66cf000000003102f3de",
+      "nickname": "开发者.Meepo",
+      "content": "我已经用上了啊",
+      "like_count": 1,
+      "create_time": "7小时前河南",
+      "replies": [
+        {
+          "id": "comment_33",
+          "nickname": "开发者.Meepo",
+          "content": "我已经用上了啊",
+          "like_count": 1,
+          "create_time": "7小时前河南"
+        }
+      ]
+    },
+    {
+      "id": "comment-699e8c0a0000000006031fe4",
+      "nickname": "细雨清风",
+      "content": "我还让cc给我做了一个呢白做了",
+      "like_count": 1,
+      "create_time": "4小时前上海",
+      "replies": [
+        {
+          "id": "comment_47",
+          "nickname": "细雨清风",
+          "content": "我还让cc给我做了一个呢白做了",
+          "like_count": 1,
+          "create_time": "4小时前上海"
+        }
+      ]
+    },
+    {
+      "id": "comment-699eaa1a000000000b036461",
+      "nickname": "开发者.Meepo",
+      "content": "那你直接用happy coder + api拼车服务也行啊",
+      "like_count": 0,
+      "create_time": "2小时前河南",
+      "replies": [
+        {
+          "id": "comment_5",
+          "nickname": "开发者.Meepo",
+          "content": "那你直接用happy coder + api拼车服务也行啊",
+          "like_count": 0,
+          "create_time": "2小时前河南"
+        }
+      ]
+    },
+    {
+      "id": "comment-699eabda000000000f025af7",
+      "nickname": "开发者.Meepo",
+      "content": "回复 开发者.Meepo : 我琢磨一下，我现在用的是ccr＋第三方api，非常希望有手机远程交流的功能",
+      "like_count": 0,
+      "create_time": "2小时前上海",
+      "replies": [
+        {
+          "id": "comment_7",
+          "nickname": "开发者.Meepo",
+          "content": "回复 开发者.Meepo : 我琢磨一下，我现在用的是ccr＋第三方api，非常希望有手机远程交流的功能",
+          "like_count": 0,
+          "create_time": "2小时前上海"
+        }
+      ]
+    },
+    {
+      "id": "comment-699e798c00000000310334f5",
+      "nickname": "开发者.Meepo",
+      "content": "你封是因为用app还是？反正 happy coder 这种我是没敢用",
+      "like_count": 0,
+      "create_time": "5小时前河南",
+      "replies": [
+        {
+          "id": "comment_11",
+          "nickname": "开发者.Meepo",
+          "content": "你封是因为用app还是？反正 happy coder 这种我是没敢用",
+          "like_count": 0,
+          "create_time": "5小时前河南"
+        }
+      ]
+    },
+    {
+      "id": "comment-699e7d8f000000000600ef01",
+      "nickname": "无常的昵称",
+      "content": "手机不也是官方的吗 为什么还会被封 🧐",
+      "like_count": 0,
+      "create_time": "5小时前美国",
+      "replies": [
+        {
+          "id": "comment_13",
+          "nickname": "无常的昵称",
+          "content": "手机不也是官方的吗 为什么还会被封 🧐",
+          "like_count": 0,
+          "create_time": "5小时前美国"
+        }
+      ]
+    },
+    {
+      "id": "comment-699e82b50000000009020f35",
+      "nickname": "哈哈",
+      "content": "哈哈正解5小时前北京赞回复",
+      "like_count": 0,
+      "create_time": "5小时前北京",
+      "replies": [
+        {
+          "id": "comment_15",
+          "nickname": "哈哈",
+          "content": "哈哈正解5小时前北京赞回复",
+          "like_count": 0,
+          "create_time": "5小时前北京"
+        }
+      ]
+    },
+    {
+      "id": "comment-699e899e000000000c016035",
+      "nickname": "无常的昵称",
+      "content": "回复 无常的昵称 : 就是登录手机过的 auth 方式比 cli 严格很多 所以如果长期在 app 上操作容易被风控（据说）",
+      "like_count": 0,
+      "create_time": "4小时前湖南",
+      "replies": [
+        {
+          "id": "comment_17",
+          "nickname": "无常的昵称",
+          "content": "回复 无常的昵称 : 就是登录手机过的 auth 方式比 cli 严格很多 所以如果长期在 app 上操作容易被风控（据说）",
+          "like_count": 0,
+          "create_time": "4小时前湖南"
+        }
+      ]
+    },
+    {
+      "id": "comment-699ea181000000000f01a02b",
+      "nickname": "幽灵系宝可梦训练大师",
+      "content": "手机端web很容易被封，app还好的。不是长期tun别给claude app放常驻的手机助手权限就行",
+      "like_count": 0,
+      "create_time": "3小时前湖北",
+      "replies": [
+        {
+          "id": "comment_19",
+          "nickname": "幽灵系宝可梦训练大师",
+          "content": "手机端web很容易被封，app还好的。不是长期tun别给claude app放常驻的手机助手权限就行",
+          "like_count": 0,
+          "create_time": "3小时前湖北"
+        }
+      ]
+    },
+    {
+      "id": "comment-699e6ccb000000000803096b",
+      "nickname": "鹿鹿🦌",
+      "content": "我不太一样，直接给了我一个网页手机复制打开就行",
+      "like_count": 0,
+      "create_time": "6小时前新加坡",
+      "replies": [
+        {
+          "id": "comment_25",
+          "nickname": "鹿鹿🦌",
+          "content": "我不太一样，直接给了我一个网页手机复制打开就行",
+          "like_count": 0,
+          "create_time": "6小时前新加坡"
+        }
+      ]
+    },
+    {
+      "id": "comment-699e6e2b000000000f02b110",
+      "nickname": "开发者.Meepo",
+      "content": "回复 开发者.Meepo : cc的web版本可以吗",
+      "like_count": 0,
+      "create_time": "6小时前广东",
+      "replies": [
+        {
+          "id": "comment_27",
+          "nickname": "开发者.Meepo",
+          "content": "回复 开发者.Meepo : cc的web版本可以吗",
+          "like_count": 0,
+          "create_time": "6小时前广东"
+        }
+      ]
+    },
+    {
+      "id": "comment-699e66070000000006009c60",
+      "nickname": "Ruuuuuu",
+      "content": "max 也用不了啊",
+      "like_count": 0,
+      "create_time": "7小时前美国",
+      "replies": [
+        {
+          "id": "comment_31",
+          "nickname": "Ruuuuuu",
+          "content": "max 也用不了啊",
+          "like_count": 0,
+          "create_time": "7小时前美国"
+        }
+      ]
+    },
+    {
+      "id": "comment-699e8cb30000000009022684",
+      "nickname": "佐罗把拔",
+      "content": "升级claude code cli，然后运行claude remote-control",
+      "like_count": 0,
+      "create_time": "4小时前浙江",
+      "replies": [
+        {
+          "id": "comment_35",
+          "nickname": "佐罗把拔",
+          "content": "升级claude code cli，然后运行claude remote-control",
+          "like_count": 0,
+          "create_time": "4小时前浙江"
+        }
+      ]
+    },
+    {
+      "id": "comment-699eb223000000001803894f",
+      "nickname": "DanielTTY",
+      "content": "可以选模型吗？ codex cloud不可以",
+      "like_count": 0,
+      "create_time": "1小时前马来西亚",
+      "replies": [
+        {
+          "id": "comment_37",
+          "nickname": "DanielTTY",
+          "content": "可以选模型吗？ codex cloud不可以",
+          "like_count": 0,
+          "create_time": "1小时前马来西亚"
+        }
+      ]
+    },
+    {
+      "id": "comment-699e7c28000000001500ed11",
+      "nickname": "好运连连",
+      "content": "老大你用什么方法注册的账户使用的cc",
+      "like_count": 0,
+      "create_time": "5小时前安徽",
+      "replies": [
+        {
+          "id": "comment_39",
+          "nickname": "好运连连",
+          "content": "老大你用什么方法注册的账户使用的cc",
+          "like_count": 0,
+          "create_time": "5小时前安徽"
+        }
+      ]
+    },
+    {
+      "id": "comment-699e7ed5000000000800ce01",
+      "nickname": "开发者.Meepo",
+      "content": "支付用的海外账户",
+      "like_count": 0,
+      "create_time": "5小时前河南",
+      "replies": [
+        {
+          "id": "comment_41",
+          "nickname": "开发者.Meepo",
+          "content": "支付用的海外账户",
+          "like_count": 0,
+          "create_time": "5小时前河南"
+        }
+      ]
+    },
+    {
+      "id": "comment-699e73b700000000090236a8",
+      "nickname": "ZH anne",
+      "content": "这个是目前只有ios可以吗",
+      "like_count": 0,
+      "create_time": "6小时前法国",
+      "replies": [
+        {
+          "id": "comment_43",
+          "nickname": "ZH anne",
+          "content": "这个是目前只有ios可以吗",
+          "like_count": 0,
+          "create_time": "6小时前法国"
+        }
+      ]
+    },
+    {
+      "id": "comment-699e79970000000031001330",
+      "nickname": "开发者.Meepo",
+      "content": "你也可以直接用 web 端",
+      "like_count": 0,
+      "create_time": "5小时前河南",
+      "replies": [
+        {
+          "id": "comment_45",
+          "nickname": "开发者.Meepo",
+          "content": "你也可以直接用 web 端",
+          "like_count": 0,
+          "create_time": "5小时前河南"
+        }
+      ]
+    },
+    {
+      "id": "comment-699e6d2a0000000004001183",
+      "nickname": "熬夜变成烂苹果",
+      "content": "只有订阅可以用吗？api用不了？",
+      "like_count": 0,
+      "create_time": "6小时前北京",
+      "replies": [
+        {
+          "id": "comment_49",
+          "nickname": "熬夜变成烂苹果",
+          "content": "只有订阅可以用吗？api用不了？",
+          "like_count": 0,
+          "create_time": "6小时前北京"
+        }
+      ]
+    },
+    {
+      "id": "comment-699e735f0000000032000b04",
+      "nickname": "开发者.Meepo",
+      "content": "我是官方 max，其他不知道",
+      "like_count": 0,
+      "create_time": "6小时前河南",
+      "replies": [
+        {
+          "id": "comment_51",
+          "nickname": "开发者.Meepo",
+          "content": "我是官方 max，其他不知道",
+          "like_count": 0,
+          "create_time": "6小时前河南"
+        }
+      ]
+    }
+  ]
+}

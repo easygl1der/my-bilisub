@@ -1,5 +1,35 @@
 [
   {
+    "id": "20260225160134",
+    "timestamp": "2026-02-25T16:01:34.823783",
+    "date": "2026-02-25",
+    "time": "16:01:34",
+    "change_type": "test",
+    "description": "测试 auto_content_workflow.py B站基本用法",
+    "files": [
+      "auto_content_workflow.py"
+    ],
+    "details": "测试结果总结：\n\n1. ✅ 基本视频下载 - 完美实现\n   - 成功检测并跳过已下载文件（去重功能）\n   - 按用户ID组织目录\n   - 文件按视频标题命名\n\n2. ❌ 字幕提取 + AI分析 - 依赖缺失\n   - 错误：No module named 'bilibili_api'\n   - 需要安装：pip install bilibili_api\n\n3. ❌ 下载视频 + 生成学习笔记 - 依赖缺失\n   - 视频下载成功，跳过重复下载\n   - 学习笔记生成失败：No module named 'google.generativeai'\n   - 需要安装：pip install google-generativeai\n\n结论：\n- 基础下载功能完美实现\n- 去重功能工作正常\n- 需要安装依赖包才能使用字幕和学习笔记功能",
+    "tags": [
+      "测试,B站,工作流"
+    ]
+  },
+  {
+    "id": "20260225153820",
+    "timestamp": "2026-02-25T15:38:20.894151",
+    "date": "2026-02-25",
+    "time": "15:38:20",
+    "change_type": "feature",
+    "description": "完善 auto_content_workflow.py 视频下载功能",
+    "files": [
+      "auto_content_workflow.py"
+    ],
+    "details": "完美实现视频下载工作流，支持以下功能：\n\n核心功能：\n1. 视频下载到指定位置\n2. 按用户ID组织目录结构\n3. 视频文件命名为视频标题\n4. 下载前检测重复（避免重复下载）\n\n目录结构：\noutput/\n  用户ID/\n    视频标题.mp4\n    视频标题_srt.txt (字幕文件)\n    视频标题_notes.md (AI笔记)\n\n智能去重：\n- 检查目标目录是否已存在同名视频文件\n- 如果已下载，跳过下载步骤\n- 支持增量处理，节省时间和带宽\n\n运行方式：\npython auto_content_workflow.py \"B站视频链接\"\n\n完美实现。",
+    "tags": [
+      "B站,视频下载,工作流,去重检测"
+    ]
+  },
+  {
     "id": "20260224205657",
     "timestamp": "2026-02-24T20:56:57.567552",
     "date": "2026-02-24",

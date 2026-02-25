@@ -1,0 +1,13 @@
+标题: 重磅，ClaudeCode刚刚原生支持远程控制了！
+链接: https://www.xiaohongshu.com/explore/699e557e000000001d024d0e?xsec_token=ABavXPUj3ZYaRIn8_xSrh7u7fO9X9SCztwYXgiUOHWQZo=&xsec_source=
+
+文案:
+刚刚重磅更新！Claude  Code 原生支持远程控制了！随时远程 Vibe Coding，还能避免 CC 封号的风险。
+	
+命令行执行  /remote-control 就能把对应的本地对话新建一个远程的 session 持续存在，通过 http://claude.ai 或者手机端 App 来打开这个 session 就能远程继续对话了！
+	
+但是对于拥有 CC 的我来说，OpenClaw 我没感觉到有啥用，但这次 Claude Code 的远程控制，真的让我爽到了！
+	
+虽然之前有 Happy Coder 方案也能远程支持 Claude Code Cli 连接，但是 Claude Code 封禁策略比较严格，我一直不敢冒这个风险，这些好了，官方直接出品了
+	
+不过这个当前还只针对 Claude Max 用户，Pro 用户还得等等。

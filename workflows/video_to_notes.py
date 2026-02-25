@@ -55,19 +55,24 @@ DEFAULT_OUTPUT_DIR = "learning_notes"
 
 
 def get_api_key() -> str:
-    """获取 Gemini API Key"""
-    api_key = os.environ.get('GEMINI_API_KEY')
-    if api_key:
-        return api_key
-
+    """获取 Gemini API Key (优先级: 配置文件 > 环境变量)"""
+    # 1. 优先从配置文件读取
     try:
-        sys.path.insert(0, str(Path(__file__).parent))
-        from config.config_api import API_CONFIG
+        # 获取项目根目录 (workflows/ 的父目录)
+        project_root = Path(__file__).parent.parent
+        config_path = project_root / 'config'
+        sys.path.insert(0, str(config_path))
+        from config_api import API_CONFIG
         api_key = API_CONFIG.get('gemini', {}).get('api_key')
         if api_key:
             return api_key
-    except ImportError:
+    except (ImportError, FileNotFoundError):
         pass
+
+    # 2. 其次从环境变量读取
+    api_key = os.environ.get('GEMINI_API_KEY')
+    if api_key:
+        return api_key
 
     return None
 
@@ -84,21 +89,26 @@ def sanitize_filename(name: str, max_length: int = 100) -> str:
 
 
 def get_github_config() -> Dict:
-    """获取 GitHub 配置"""
-    # 环境变量
-    token = os.environ.get('GITHUB_TOKEN')
-    repo = os.environ.get('GITHUB_REPO')
+    """获取 GitHub 配置 (优先级: 配置文件 > 环境变量)"""
+    # 1. 优先从配置文件读取
+    token = None
+    repo = None
+    try:
+        # 获取项目根目录 (workflows/ 的父目录)
+        project_root = Path(__file__).parent.parent
+        config_path = project_root / 'config'
+        sys.path.insert(0, str(config_path))
+        from config_api import API_CONFIG
+        github_config = API_CONFIG.get('github', {})
+        token = github_config.get('token')
+        repo = github_config.get('repo')
+    except (ImportError, FileNotFoundError):
+        pass
 
-    # 从 config_api.py 获取
+    # 2. 其次从环境变量读取
     if not token or not repo:
-        try:
-            sys.path.insert(0, str(Path(__file__).parent))
-            from config_api import API_CONFIG
-            github_config = API_CONFIG.get('github', {})
-            token = token or github_config.get('token')
-            repo = repo or github_config.get('repo')
-        except ImportError:
-            pass
+        token = token or os.environ.get('GITHUB_TOKEN')
+        repo = repo or os.environ.get('GITHUB_REPO')
 
     return {'token': token, 'repo': repo}
 
@@ -982,15 +992,79 @@ def analyze_with_gemini(video_path: Path, title: str, language: str = 'zh',
 
 # ==================== Markdown 生成 ====================
 
+def detect_video_source(source: str) -> Dict:
+    """检测视频来源
+
+    Returns:
+        {
+            'type': 'local' | 'url',
+            'platform': 'bilibili' | 'xiaohongshu' | 'youtube' | 'other',
+            'url': 原始 URL（如果是 URL 类型）
+            'file_path': 本地文件路径（如果是本地类型）
+        }
+    """
+    if source.startswith(('http://', 'https://')):
+        # URL 类型
+        if 'bilibili.com' in source or 'b23.tv' in source:
+            return {'type': 'url', 'platform': 'bilibili', 'url': source, 'file_path': None}
+        elif 'xiaohongshu.com' in source or 'xhslink.com' in source:
+            return {'type': 'url', 'platform': 'xiaohongshu', 'url': source, 'file_path': None}
+        elif 'youtube.com' in source or 'youtu.be' in source:
+            return {'type': 'url', 'platform': 'youtube', 'url': source, 'file_path': None}
+        else:
+            return {'type': 'url', 'platform': 'other', 'url': source, 'file_path': None}
+    else:
+        # 本地文件类型
+        return {'type': 'local', 'platform': 'local', 'url': None, 'file_path': source}
+
+
 def build_markdown(title: str, video_path: Path, keyframes: List[Dict],
                     analysis: str, assets_dir: str = 'assets') -> str:
     """生成 Markdown 笔记"""
     lines = []
 
-    # 生成视频跳转链接（支持本地播放器）
-    # 格式: [<local-video-path>]#t=<seconds>
-    video_url = str(video_path).replace('\\', '/')
-    time_link_prefix = f"[{video_url}]#t="
+    # 检测视频来源
+    video_source = detect_video_source(str(video_path))
+    source_type = video_source['type']
+    platform = video_source['platform']
+    original_url = video_source['url']
+
+    # 根据视频来源生成时间戳链接
+    if source_type == 'url':
+        # 在线视频：生成带时间戳的链接
+        if platform == 'bilibili':
+            # B站：提取 BV 号或 AV 号
+            from urllib.parse import urlparse, parse_qs
+            parsed = urlparse(original_url)
+            # 提取视频 ID（可能是 /video/BVxxx 或 ?p=xxx）
+            video_id = None
+            if 'bilibili.com/video/' in original_url:
+                path_parts = parsed.path.split('/')
+                for part in path_parts:
+                    if part.startswith('BV') or part.startswith('av'):
+                        video_id = part
+                        break
+            elif 'p=' in original_url or 'bvid=' in original_url:
+                # 从 URL 参数提取
+                query_params = parse_qs(parsed.query)
+                video_id = query_params.get('p', [None])[0] or query_params.get('bvid', [None])[0]
+
+            if video_id:
+                # B站时间戳链接：https://www.bilibili.com/video/BVxxx/?t=seconds
+                base_url = f"https://www.bilibili.com/video/{video_id}"
+            else:
+                base_url = original_url
+        elif platform == 'youtube':
+            # YouTube：使用 t 参数
+            from urllib.parse import urlparse, parse_qs
+            parsed = urlparse(original_url)
+            base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+        else:
+            # 其他平台：直接使用原 URL
+            base_url = original_url
+    else:
+        # 本地视频：不需要跳转链接，只显示时间
+        base_url = None
 
     # 标题
     lines.append(f"# {title} - 学习笔记")
@@ -1035,7 +1109,14 @@ def build_markdown(title: str, video_path: Path, keyframes: List[Dict],
             # 时间和描述（添加跳转链接）
             time_min = int(timestamp // 60)
             time_sec = int(timestamp % 60)
-            lines.append(f"**🕐 [{time_min:02d}:{time_sec:02d}]({time_link_prefix}{timestamp:.0f})** - {description}")
+            total_seconds = int(timestamp)
+            # 根据视频来源生成时间戳链接
+            if base_url:
+                # 在线视频：生成可点击的链接
+                lines.append(f"[{time_min:02d}:{time_sec:02d}]({base_url}#t={total_seconds}) - {description}")
+            else:
+                # 本地视频：只显示时间戳
+                lines.append(f"[{time_min:02d}:{time_sec:02d}] - {description}")
             lines.append("")
 
             # 选择理由

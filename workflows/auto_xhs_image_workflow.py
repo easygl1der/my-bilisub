@@ -9,7 +9,6 @@
 用法: python auto_xhs_image_workflow.py "小红书笔记链接"
 """
 
-import os
 import sys
 import subprocess
 import argparse
@@ -74,19 +73,39 @@ def main():
     print("步骤 1/2: 下载笔记图片和文案")
     print("="*80)
 
+    # 修改 subprocess.run 以捕获输出
     cmd = [sys.executable, str(DOWNLOAD_SCRIPT), args.url]
-    result = subprocess.run(cmd, cwd=PROJECT_ROOT)
+    result = subprocess.run(cmd, cwd=PROJECT_ROOT, capture_output=True, text=True, encoding='utf-8')
+
+    # 打印下载脚本的输出
+    print(result.stdout)
+    if result.stderr:
+        print(result.stderr, file=sys.stderr)
 
     if result.returncode != 0:
         print("\n❌ 下载失败!")
         sys.exit(1)
 
-    # 步骤2: 分析笔记
-    print("\n" + "="*80)
-    print("步骤 2/2: AI 分析笔记内容")
-    print("="*80)
+    # 从输出中提取下载目录路径
+    # download_xhs_images.py 最后一行会打印: "位置: /path/to/xhs_images/用户名/笔记标题"
+    note_dir = None
+    for line in result.stdout.split('\n'):
+        if line.strip().startswith('位置:'):
+            note_dir = line.strip()[3:].strip()
+            break
 
-    cmd = [sys.executable, str(ANALYSIS_SCRIPT), "--url", args.url, "--model", args.model]
+    if not note_dir:
+        print("\n⚠️ 无法从输出中提取下载目录，将尝试使用 URL 方式")
+        # 降级方案：使用 URL（会重复下载）
+        cmd = [sys.executable, str(ANALYSIS_SCRIPT), "--url", args.url, "--model", args.model]
+    else:
+        # 步骤2: 分析笔记
+        print("\n" + "="*80)
+        print("步骤 2/2: AI 分析笔记内容")
+        print("="*80)
+
+        # 使用 --dir 参数指定已下载的目录，避免重复下载
+        cmd = [sys.executable, str(ANALYSIS_SCRIPT), "--dir", note_dir, "--model", args.model]
 
     if args.upload_github:
         cmd.append("--upload-github")

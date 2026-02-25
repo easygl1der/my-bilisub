@@ -40,6 +40,8 @@ python-telegram-bot>=21.0
 
 # 浏览器自动化 (B站首页采集)
 playwright>=1.40.0
+selenium>=4.15.0
+webdriver-manager>=4.0.1
 
 # MediaCrawler 依赖
 sqlalchemy>=2.0.43

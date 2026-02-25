@@ -36,7 +36,7 @@ if sys.platform == 'win32':
 
 
 # ==================== 配置 ====================
-OUTPUT_DIR = Path("test_downloads")
+OUTPUT_DIR = Path("downloaded_videos")
 BILI_COOKIE_FILE = "config/cookies.txt"
 # ============================================
 
@@ -145,7 +145,20 @@ def get_video_info(url: str) -> dict:
 def download_video(url: str, output_dir: Path = OUTPUT_DIR) -> bool:
     """下载视频"""
     platform = detect_platform(url)
-    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # 根据平台创建对应的子目录
+    platform_subdir = {
+        'bilibili': 'bilibili',
+        'xiaohongshu': 'xhs',
+        'youtube': 'youtube'
+    }.get(platform, '')
+
+    if platform_subdir:
+        actual_output_dir = output_dir / platform_subdir
+    else:
+        actual_output_dir = output_dir
+
+    actual_output_dir.mkdir(parents=True, exist_ok=True)
 
     # 先获取信息
     print("📡 获取视频信息...")
@@ -153,11 +166,32 @@ def download_video(url: str, output_dir: Path = OUTPUT_DIR) -> bool:
         info = get_video_info(url)
         title = info.get('title', 'unknown')
         duration = info.get('duration', 0)
+        uploader = info.get('uploader') or info.get('channel', 'unknown')
+
         print(f"   标题: {title[:60]}...")
-        print(f"   时长: {duration // 60}分{duration % 60}秒" if duration else "   时长: 未知")
+        if duration is not None and isinstance(duration, (int, float)):
+            print(f"   时长: {duration // 60}分{duration % 60}秒")
+        else:
+            print("   时长: 未知")
+
+        # 对于 B 站，在平台子目录下按 UP 主分类
+        if platform == 'bilibili' and uploader:
+            safe_uploader = "".join(c if c.isalnum() or c in (' ', '-', '_') else '_' for c in uploader)[:50]
+            print(f"   UP主: {uploader}")
+
+            # 在平台子目录下创建 UP 主子目录
+            uploader_dir = actual_output_dir / safe_uploader
+            uploader_dir.mkdir(parents=True, exist_ok=True)
+
+            # 下载到 UP 主子目录
+            final_output_dir = uploader_dir
+        else:
+            final_output_dir = actual_output_dir
+
     except Exception as e:
         print(f"   获取信息失败: {e}")
         title = f"video_{int(time.time())}"
+        final_output_dir = actual_output_dir
 
     # 清理文件名
     safe_title = "".join(c if c.isalnum() or c in (' ', '-', '_') else '_' for c in title)[:100]
@@ -166,7 +200,7 @@ def download_video(url: str, output_dir: Path = OUTPUT_DIR) -> bool:
     progress_hook = ProgressHook()
     ydl_opts = {
         'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-        'outtmpl': str(output_dir / f"{safe_title}.%(ext)s"),
+        'outtmpl': str(final_output_dir / f"{safe_title}.%(ext)s"),
         'quiet': True,
         'no_warnings': True,
         'progress_hooks': [progress_hook],
@@ -204,7 +238,7 @@ def download_video(url: str, output_dir: Path = OUTPUT_DIR) -> bool:
             ydl.extract_info(url, download=True)
 
         # 查找下载的文件
-        files = list(output_dir.glob(f"{safe_title}.*"))
+        files = list(final_output_dir.glob(f"{safe_title}.*"))
         if files:
             downloaded = max(files, key=lambda f: f.stat().st_mtime)
             size_mb = downloaded.stat().st_size / 1024 / 1024

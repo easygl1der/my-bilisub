@@ -5,7 +5,19 @@
       "Bash(\"E:/Anaconda/envs/bilisub/python.exe\":*)",
       "Bash(E:/Anaconda/envs/bilisub/python.exe -c \":*)",
       "Bash(E:/Anaconda/envs/bilisub/python.exe:*)",
-      "Bash(1:*)"
+      "Bash(1:*)",
+      "Bash(conda:*)",
+      "Bash(tasklist:*)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Bash(timeout:*)",
+      "Read(//c/Users/28024/AppData/Local/Temp/claude/d-----biliSub/tasks//**)",
+      "Bash(PYTHONIOENCODING=utf-8 /e/Anaconda/envs/bilisub/python.exe:*)",
+      "Bash(sort:*)"
+    ],
+    "additionalDirectories": [
+      "D:\\桌面\\biliSub\\output\\subtitles",
+      "D:\\桌面\\biliSub\\test_downloads"
     ]
   }
 }

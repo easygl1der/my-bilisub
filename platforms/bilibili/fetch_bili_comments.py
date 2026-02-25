@@ -1,10 +1,26 @@
 #!/usr/bin/env python3
 """
 B站评论爬取工具
-使用已有的 Cookie 爬取指定视频的评论
+使用已有的 Cookie 爬取指定视频的评论（按热度排序，获取最热评论）
 
 使用方法:
-    python fetch_bili_comments.py
+    python fetch_bili_comments.py "视频链接" [评论数量]
+
+示例:
+    # 爬取前50条最热评论（默认）
+    python fetch_bili_comments.py "https://www.bilibili.com/video/BV1UPZtBiEFS"
+
+    # 爬取前20条最热评论
+    python fetch_bili_comments.py "https://www.bilibili.com/video/BV1UPZtBiEFS" 20
+
+    # 爬取全部最热评论
+    python fetch_bili_comments.py "https://www.bilibili.com/video/BV1UPZtBiEFS" 0
+
+    # 输出为 Markdown 格式
+    python fetch_bili_comments.py "视频链接" -f md
+
+    # 只爬取有点赞数的主评论
+    python fetch_bili_comments.py "视频链接" --only-liked
 """
 
 import json
@@ -85,7 +101,7 @@ except Exception as e:
 OUTPUT_DIR = "bili_comments_output"
 
 # 每页评论数
-PAGE_SIZE = 50  # 增加每页数量，确保爬取所有评论
+PAGE_SIZE = 20  # B站 API 页码限制
 
 # 请求延迟
 REQUEST_DELAY = 1
@@ -171,13 +187,22 @@ class BiliCommentClient:
     def __init__(self):
         self.headers = get_headers()
 
-    def get_comments(self, video_id: str, max_count: int = 100) -> List[Dict]:
-        """获取视频评论"""
-        all_comments = []
+    def get_comments(self, video_id: str, max_count: int = 50, only_liked: bool = False) -> List[Dict]:
+        """获取视频最热评论
 
-        print(f"\n📺 开始爬取B站视频评论")
+        Args:
+            video_id: 视频 ID（BV 或 AV 号）
+            max_count: 最大评论数，默认 50 条最热评论
+            only_liked: 是否只爬取有点赞数的主评论（默认 False）
+
+        Returns:
+            评论列表
+        """
+        print(f"\n📺 开始爬取B站视频最热评论")
         print(f"   视频 ID: {video_id}")
-        print(f"   目标数量: {max_count}\n")
+        print(f"   🔥 模式：收集评论后按点赞数排序")
+        if only_liked:
+            print(f"   🔍 过滤模式：仅爬取有点赞数的主评论")
 
         # 判断是 BV 号还是 AV 号
         if video_id.startswith('BV'):
@@ -188,40 +213,120 @@ class BiliCommentClient:
         else:
             oid = video_id
 
+        # 第一阶段：收集多页评论（默认爬取前10页）
+        all_collected = []
         page = 1
+        max_pages_to_fetch = 10  # 最多爬取10页（约200条评论）
+        total_available = None
 
-        while len(all_comments) < max_count:
+        print(f"\n   📥 第一阶段：收集评论...")
+        while page <= max_pages_to_fetch:
             print(f"   正在获取第 {page} 页...")
 
             try:
-                comments = self._fetch_page(oid, page)
+                result = self._fetch_page(oid, page)
+                comments = result.get('comments', [])
+
+                # 获取总评论数（首次获取时）
+                if total_available is None:
+                    total_available = result.get('total_count', 0)
+                    if total_available > 0:
+                        print(f"   📊 视频共有 {total_available} 条主评论")
+                    # 确定要爬取的页数
+                    if total_available < PAGE_SIZE * max_pages_to_fetch:
+                        max_pages_to_fetch = (total_available + PAGE_SIZE - 1) // PAGE_SIZE
+                        print(f"   📄 将爬取 {max_pages_to_fetch} 页")
+
                 if not comments:
+                    print(f"   ✅ 第 {page} 页无评论，结束收集")
                     break
 
-                all_comments.extend(comments)
-                print(f"   ✅ 获取到 {len(comments)} 条评论，总计 {len(all_comments)} 条")
-
-                if len(comments) < PAGE_SIZE:
-                    break
+                all_collected.extend(comments)
+                print(f"   ✅ 本页获取 {len(comments)} 条，累计 {len(all_collected)} 条")
 
                 page += 1
-                time.sleep(REQUEST_DELAY)
 
             except Exception as e:
                 print(f"   ⚠️  获取失败: {e}")
                 break
 
-        return all_comments[:max_count]
+        if not all_collected:
+            print("   ❌ 未获取到任何评论")
+            return []
 
-    def _fetch_page(self, oid: int, page: int) -> List[Dict]:
-        """获取一页评论"""
+        print(f"\n   📊 第二阶段：按点赞数排序...")
+
+        # 第二阶段：按点赞数降序排序
+        all_collected.sort(key=lambda x: x.get('likes', 0), reverse=True)
+
+        # 统计点赞数分布
+        if all_collected:
+            max_likes = max(c.get('likes', 0) for c in all_collected)
+            min_likes = min(c.get('likes', 0) for c in all_collected)
+            avg_likes = sum(c.get('likes', 0) for c in all_collected) / len(all_collected)
+            print(f"   📈 点赞统计：最高 {max_likes} 赞，最低 {min_likes} 赞，平均 {avg_likes:.1f} 赞")
+
+        # 确定最终数量
+        target_count = min(max_count if max_count else len(all_collected), len(all_collected))
+        hot_comments = all_collected[:target_count]
+
+        print(f"   ✅ 筛选出 {len(hot_comments)} 条最热评论")
+
+        # 显示前3条最热评论预览
+        print(f"\n   🔥 热评预览：")
+        for i, comment in enumerate(hot_comments[:3], 1):
+            content = comment.get('content', '')[:40]
+            likes = comment.get('likes', 0)
+            author = comment.get('author', '未知')
+            print(f"      {i}. [{likes}赞] {author}: {content}{'...' if len(comment.get('content', '')) > 40 else ''}")
+
+        # 第三阶段：为每条热评获取回复
+        print(f"\n   💬 第三阶段：获取热评回复...")
+
+        final_comments = []
+        for i, comment in enumerate(hot_comments, 1):
+            if i % 10 == 0 or i == len(hot_comments):
+                print(f"   进度: {i}/{len(hot_comments)}")
+
+            # 检查是否有点赞数要求
+            if only_liked and comment.get('likes', 0) <= 0:
+                continue
+
+            # 获取子评论
+            rpid = comment.get('comment_id')
+            rcount = comment.get('rcount', 0)
+
+            if rcount > 0:
+                # 需要获取子评论，先用API获取
+                sub_replies = self._fetch_replies(oid, int(rpid))
+                comment['replies'] = sub_replies
+            else:
+                comment['replies'] = []
+
+            final_comments.append(comment)
+
+        print(f"\n   📈 最终统计：")
+        print(f"      📊 总共筛选 {len(final_comments)} 条热评")
+        print(f"      💬 包含子评论 {sum(1 for c in final_comments for _ in c.get('replies', []))} 条")
+
+        return final_comments
+
+    def _fetch_page(self, oid: int, page: int) -> Dict:
+        """获取一页评论
+
+        Returns:
+            dict: {
+                'comments': 评论列表,
+                'total_count': 总评论数
+            }
+        """
         # 使用旧版 API（不需要 WBI 签名）
         url = "https://api.bilibili.com/x/v2/reply"
 
         params = {
             'type': 1,
             'oid': oid,
-            'mode': 3,  # 按热门排序
+            'mode': 0,  # 按热度排序（获取最热评论）
             'ps': PAGE_SIZE,
             'pn': page,
         }
@@ -233,19 +338,82 @@ class BiliCommentClient:
 
             if data.get('code') == 0:
                 replies = data.get('data', {}).get('replies', [])
+                page_info = data.get('data', {}).get('page', {})
+                total_count = page_info.get('count', 0)
+
                 if replies is None:
                     replies = []
-                return self._parse_comments(replies)
+
+                return {
+                    'comments': self._parse_comments(replies, oid=oid),
+                    'total_count': total_count
+                }
             else:
                 print(f"   ⚠️  API 错误: {data.get('message', '未知错误')}")
-                return []
+                return {'comments': [], 'total_count': 0}
 
         except Exception as e:
             print(f"   ⚠️  请求异常: {e}")
-            return []
+            return {'comments': [], 'total_count': 0}
 
-    def _parse_comment(self, reply: Dict, level: int = 0) -> Dict:
-        """解析单条评论（递归处理回复）"""
+    def _fetch_replies(self, oid: int, root_rpid: int) -> List[Dict]:
+        """获取指定评论的全部子评论
+
+        Args:
+            oid: 视频 ID（AV 号）
+            root_rpid: 根评论 ID
+
+        Returns:
+            子评论列表
+        """
+        all_replies = []
+        page = 1
+
+        while True:
+            url = "https://api.bilibili.com/x/v2/reply/reply"
+            params = {
+                'oid': oid,
+                'root': root_rpid,
+                'pn': page,
+                'ps': PAGE_SIZE,
+            }
+
+            try:
+                response = requests.get(url, headers=self.headers, params=params, timeout=15)
+                data = response.json()
+
+                if data.get('code') == 0:
+                    replies_data = data.get('data', {}).get('replies', {})
+                    page_info = data.get('data', {}).get('page', {})
+
+                    # replies 是一个字典，key 是回复类型
+                    for reply_type in replies_data.values():
+                        if reply_type:
+                            for reply in reply_type:
+                                all_replies.append(reply)
+
+                    # 检查是否还有更多页
+                    if page_info.get('num', 0) <= page:
+                        break
+
+                    page += 1
+                else:
+                    break
+
+            except Exception as e:
+                print(f"      ⚠️  获取子评论失败: {e}")
+                break
+
+        return self._parse_comments(all_replies)
+
+    def _parse_comment(self, reply: Dict, level: int = 0, oid: int = None) -> Dict:
+        """解析单条评论（递归处理回复）
+
+        Args:
+            reply: 评论数据
+            level: 评论层级
+            oid: 视频 ID（用于获取子评论）
+        """
         try:
             member = reply.get("member", {})
             if member is None:
@@ -277,27 +445,43 @@ class BiliCommentClient:
                 "replies": []
             }
 
-            # 递归处理子评论
-            sub_replies = reply.get("replies", [])
-            if sub_replies:
-                for sub_reply in sub_replies:
-                    sub_data = self._parse_comment(sub_reply, level + 1)
-                    comment_data["replies"].append(sub_data)
+            # 获取完整的子评论
+            rpid = reply.get("rpid", 0)
+            rcount = reply.get("rcount", 0)  # 子评论数量
+
+            # 只有主评论才需要获取子评论，且oid 不为 None 时
+            if level == 0 and oid is not None and rcount > 0:
+                # API 返回的 replies 只有前 3 条，需要单独请求获取全部
+                sub_replies = self._fetch_replies(oid, rpid)
+                comment_data["replies"] = sub_replies
+            else:
+                # 递归处理子评论（使用 API 返回的数据）
+                sub_replies = reply.get("replies", [])
+                if sub_replies:
+                    for sub_reply in sub_replies:
+                        sub_data = self._parse_comment(sub_reply, level + 1)
+                        comment_data["replies"].append(sub_data)
 
             return comment_data
         except Exception as e:
             return None
 
-    def _parse_comments(self, replies: List[Dict]) -> List[Dict]:
-        """解析评论数据（支持嵌套结构）"""
+    def _parse_comments(self, replies: List[Dict], oid: int = None) -> List[Dict]:
+        """解析评论数据（支持嵌套结构）
+
+        Args:
+            replies: 评论列表
+            oid: 视频 ID（用于获取子评论）
+        """
         parsed = []
 
         for reply in replies:
-            comment = self._parse_comment(reply)
+            comment = self._parse_comment(reply, oid=oid)
             if comment:
                 parsed.append(comment)
 
         return parsed
+
 
     def bv_to_aid(self, bvid: str) -> Optional[int]:
         """将 BV 号转换为 AV 号"""
@@ -469,11 +653,14 @@ def save_comments(comments: List[Dict], video_id: str, output_format: str = "jso
 # 主程序
 # ============================================================================
 
-def main(url: str = None, count: int = None, output_format: str = "json"):
+def main(url: str = None, count: int = None, output_format: str = "json", only_liked: bool = False):
     """主程序"""
     print("\n" + "="*70)
-    print("B站评论爬取工具")
+    print("B站评论爬取工具（最热评论模式）")
     print("="*70)
+
+    # 判断是否为交互式模式
+    is_interactive = (url is None)
 
     # 获取视频链接
     if not url:
@@ -492,22 +679,31 @@ def main(url: str = None, count: int = None, output_format: str = "json"):
         return
 
     print(f"\n✅ 视频 ID: {video_id}")
+    print("🔥 当前模式：收集多页评论，按点赞数排序获取最热评论")
 
     # 获取评论数量
-    if count:
-        max_count = count
-    else:
+    if count is not None:
+        # 命令行指定了数量，0 表示爬取全部收集到的评论
+        max_count = count if count != 0 else None
+    elif is_interactive:
+        # 交互式模式：询问用户
         try:
-            count_input = input("\n要爬取多少条评论? (默认50): ").strip()
-            max_count = int(count_input) if count_input else 50
+            count_input = input("\n要爬取多少条最热评论? (留空表示50条，0表示全部收集的评论): ").strip()
+            if count_input == '':
+                max_count = 50  # 默认50条
+            else:
+                max_count = int(count_input) if int(count_input) != 0 else None
         except:
             max_count = 50
+    else:
+        # 命令行模式，未指定数量：默认50条
+        max_count = 50
 
     # 创建客户端
     client = BiliCommentClient()
 
     # 获取评论
-    comments = client.get_comments(video_id, max_count)
+    comments = client.get_comments(video_id, max_count, only_liked)
 
     if not comments:
         print("\n❌ 未获取到评论")
@@ -555,14 +751,16 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="B站评论爬取工具（支持嵌套回复）")
     parser.add_argument("url", help="视频链接")
-    parser.add_argument("count", nargs="?", type=int, default=50, help="评论数量（默认50）")
+    parser.add_argument("count", nargs="?", type=int, default=50, help="评论数量（默认 50 条最热评论，0 表示全部最热）")
     parser.add_argument("-f", "--format", choices=["json", "md", "csv"], default="json",
                        help="输出格式：json（嵌套结构）、md（可读格式）、csv（扁平化），默认json")
+    parser.add_argument("--only-liked", action="store_true",
+                       help="只爬取有点赞数的主评论（子评论全部保留）")
 
     args = parser.parse_args()
 
     try:
-        main(args.url, args.count, args.format)
+        main(args.url, args.count, args.format, args.only_liked)
     except KeyboardInterrupt:
         print("\n\n用户中断程序")
     except Exception as e:

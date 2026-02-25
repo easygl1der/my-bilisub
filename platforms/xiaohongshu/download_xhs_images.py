@@ -441,7 +441,8 @@ def download_images(url, output_dir="xhs_images"):
     print(f"   文案: {'已保存' if desc else '(无)'}")
     print(f"   位置: {note_path.absolute()}")
 
-    return success_count > 0
+    # 返回下载目录路径
+    return note_path if success_count > 0 else None
 
 
 if __name__ == "__main__":

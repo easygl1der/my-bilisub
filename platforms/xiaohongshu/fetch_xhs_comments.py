@@ -1,18 +1,19 @@
 # -*- coding: utf-8 -*-
 """
-小红书笔记评论爬取工具 (HTML 爬取版)
+小红书笔记评论爬取工具 (HTML 版 - v5)
 
 功能：
 1. 使用 Cookie 直接访问笔记页面
-2. 从 HTML 中提取评论数据
-3. 生成 JSON 层级文件
-4. 包含回复关系：谁回复了谁，谁发言了
+2. 从 HTML 中提取所有评论（单层扁平）
+3. 在 Python 端按“回复 XXX : …”规则构建评论-回复树
+4. 输出 JSON：每条顶级评论 + replies（不重复自己）
 
 使用方法:
-    python fetch_xhs_comments.py "笔记链接"
+    python fetch_xhs_comments_v5.py "笔记链接"
 
-示例:
-    python fetch_xhs_comments.py "https://www.xiaohongshu.com/explore/694f9e5300000001e013674"
+需要先安装：
+    pip install playwright
+    playwright install chromium
 """
 
 import asyncio
@@ -22,312 +23,366 @@ import re
 from pathlib import Path
 from datetime import datetime
 
-# Windows编码修复
-if sys.platform == 'win32':
+if sys.platform == "win32":
     import io
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8")
 
 from playwright.async_api import async_playwright
 
-
-# ==================== 配置 ====================
 OUTPUT_DIR = Path("xhs_comments_output")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+# ==================== JS：诊断 DOM，找评论相关类 ====================
+
+_JS_DIAGNOSE = r"""
+(function () {
+    var result = {
+        all_comment_related: [],
+        sample_html: ""
+    };
+
+    var all_els = document.querySelectorAll("*");
+    var seen_cls = {};
+    for (var i = 0; i < all_els.length; i++) {
+        var el = all_els[i];
+        var cls = el.className;
+        if (typeof cls === "string" && cls.toLowerCase().indexOf("comment") !== -1) {
+            var parts = cls.trim().split(/\s+/);
+            for (var j = 0; j < parts.length; j++) {
+                var p = parts[j];
+                if (p && !seen_cls[p]) {
+                    seen_cls[p] = true;
+                    var count = document.querySelectorAll("." + CSS.escape(p)).length;
+                    result.all_comment_related.push({ cls: p, count: count });
+                }
+            }
+        }
+    }
+
+    result.all_comment_related.sort(function (a, b) {
+        return b.count - a.count;
+    });
+
+    if (result.all_comment_related.length > 0) {
+        var topCls = result.all_comment_related[0].cls;
+        var topEl = document.querySelector("." + CSS.escape(topCls));
+        if (topEl) {
+            result.sample_html = topEl.outerHTML.substring(0, 3000);
+        }
+    }
+
+    return result;
+})();
+"""
+
+# ==================== JS：扁平提取所有评论 ====================
+
+
+def build_extract_js(root_cls: str) -> str:
+    """
+    根据根评论类名生成 JS，返回扁平列表：
+    {id, nickname, content, like_count, create_time}
+    """
+    return rf"""
+(function(rootCls) {{
+    var comments = [];
+    var seen = {{}};
+
+    function getText(el) {{
+        return el ? el.textContent.trim() : "";
+    }}
+
+    function getUniqueId(item, index) {{
+        var id = item.getAttribute("data-id")
+                || item.getAttribute("data-comment-id")
+                || item.getAttribute("id")
+                || "";
+        if (!id) id = "comment_" + index;
+        return id;
+    }}
+
+    function findContent(item) {{
+        var candidates = [
+            ".content", "[class*='content']",
+            "[class*='text']", "[class*='body']",
+            "span", "p"
+        ];
+        for (var k = 0; k < candidates.length; k++) {{
+            var el = item.querySelector(candidates[k]);
+            if (el) {{
+                var t = el.textContent.trim();
+                if (t.length > 2) return t;
+            }}
+        }}
+        return item.textContent.trim().substring(0, 200);
+    }}
+
+    function findAuthor(item) {{
+        var candidates = [
+            "[class*='nick']", "[class*='name']",
+            "[class*='author']", "[class*='user']",
+            ".nickname", ".username"
+        ];
+        for (var k = 0; k < candidates.length; k++) {{
+            var el = item.querySelector(candidates[k]);
+            if (el) {{
+                var t = el.textContent.trim();
+                if (t.length > 0 && t.length < 50) return t;
+            }}
+        }}
+        return "未知用户";
+    }}
+
+    function findTime(item) {{
+        var candidates = [
+            "[class*='time']", "[class*='date']",
+            ".date", ".time", "time"
+        ];
+        for (var k = 0; k < candidates.length; k++) {{
+            var el = item.querySelector(candidates[k]);
+            if (el) return el.textContent.trim();
+        }}
+        return "";
+    }}
+
+    function findLikes(item) {{
+        var candidates = [
+            "[class*='like']", "[class*='count']",
+            "[class*='thumb']", "[class*='heart']"
+        ];
+        for (var k = 0; k < candidates.length; k++) {{
+            var el = item.querySelector(candidates[k]);
+            if (el) {{
+                var num = parseInt(el.textContent.replace(/[^0-9]/g, ""), 10);
+                if (!isNaN(num)) return num;
+            }}
+        }}
+        return 0;
+    }}
+
+    function parseItem(item, index) {{
+        var commentId = getUniqueId(item, index);
+        if (seen[commentId]) return null;
+        seen[commentId] = true;
+
+        var content = findContent(item);
+        if (!content || content.length < 1) return null;
+
+        return {{
+            id:          commentId,
+            nickname:    findAuthor(item),
+            content:     content,
+            like_count:  findLikes(item),
+            create_time: findTime(item)
+        }};
+    }}
+
+    var rootItems = document.querySelectorAll("." + rootCls);
+    var idx = 0;
+
+    for (var i = 0; i < rootItems.length; i++) {{
+        var root = rootItems[i];
+        var data = parseItem(root, idx++);
+        if (!data) continue;
+        comments.push(data);
+    }}
+
+    return comments;
+}})({json.dumps(root_cls)});
+"""
 
 
 # ==================== Cookie 管理 ====================
 
-def load_cookies():
-    """从 config/cookies.txt 读取 Cookie"""
-    cookie_file = Path("config/cookies.txt")
 
+def load_cookies():
+    cookie_file = Path("config/cookies.txt")
     if not cookie_file.exists():
         print("❌ Cookie文件不存在: config/cookies.txt")
         return None
-
-    with open(cookie_file, 'r', encoding='utf-8') as f:
+    with open(cookie_file, "r", encoding="utf-8") as f:
         content = f.read()
-
-    # 查找 xiaohongshu_full= 格式
-    match = re.search(r'xiaohongshu_full=([^\n]+)', content)
-    if match:
-        return match.group(1)
-
-    # 查找 [xiaohongshu] 部分
-    xhs_section = re.search(r'\[xiaohongshu\](.*?)\[', content, re.DOTALL)
+    m = re.search(r"xiaohongshu_full=([^\n]+)", content)
+    if m:
+        return m.group(1)
+    xhs_section = re.search(r"\[xiaohongshu\](.*?)(\[|$)", content, re.DOTALL)
     if xhs_section:
         section = xhs_section.group(1)
         cookies = []
-        for line in section.split('\n'):
+        for line in section.split("\n"):
             line = line.strip()
-            if '=' in line and not line.startswith('#'):
-                key, value = line.split('=', 1)
+            if "=" in line and not line.startswith("#"):
+                key, value = line.split("=", 1)
                 cookies.append(f"{key.strip()}={value.strip()}")
-        return '; '.join(cookies)
-
-    return None
-
-
-def extract_note_id(url):
-    """从 URL 中提取笔记 ID"""
-    if '/explore/' in url:
-        match = re.search(r'/explore/([a-f0-9]{24})', url)
-        if match:
-            return match.group(1)
-    match = re.search(r'([a-f0-9]{24})', url, re.IGNORECASE)
-    if match:
-        return match.group(0)
+        return "; ".join(cookies)
     return None
 
 
 def parse_cookies(cookie_str):
-    """将 Cookie 字符串转换为 Playwright 格式"""
     cookies = []
-    for item in cookie_str.split(';'):
+    for item in cookie_str.split(";"):
         item = item.strip()
-        if '=' in item:
-            key, value = item.split('=', 1)
-            cookies.append({
-                'name': key.strip(),
-                'value': value.strip(),
-                'domain': '.xiaohongshu.com',
-                'path': '/'
-            })
+        if "=" in item:
+            key, value = item.split("=", 1)
+            cookies.append(
+                {
+                    "name": key.strip(),
+                    "value": value.strip(),
+                    "domain": ".xiaohongshu.com",
+                    "path": "/",
+                }
+            )
     return cookies
 
 
-# ==================== 评论提取 ====================
+def extract_note_id(url):
+    if "/explore/" in url:
+        m = re.search(r"/explore/([a-f0-9]{24})", url)
+        if m:
+            return m.group(1)
+    m = re.search(r"([a-f0-9]{24})", url, re.IGNORECASE)
+    if m:
+        return m.group(0)
+    return None
+
+
+# ==================== 评论提取器 ====================
+
 
 class XHSCommentExtractor:
-    """小红书评论提取器"""
-
-    def __init__(self, note_id):
+    def __init__(self, note_id: str):
         self.note_id = note_id
-        self.all_comments = {}  # {comment_id: comment_data}
-        self.comment_tree = []  # 树形结构
+        self.root_cls: str | None = None
 
-    async def extract_comments_from_html(self, page):
-        """从 HTML 页面提取评论"""
-        print("\n  📝 正在提取评论数据...")
+    async def diagnose_dom(self, page) -> bool:
+        print("\n  🔍 诊断评论区 DOM 结构...")
+        result = await page.evaluate(_JS_DIAGNOSE)
 
-        # 使用 JavaScript 在页面中执行，提取评论数据
-        comments_data = await page.evaluate('''
-            () => {
-                const comments = [];
-                const seen = new Set();
+        classes = result.get("all_comment_related", [])
+        if not classes:
+            print("  ⚠️ 未找到包含 'comment' 的类名，可能未登录或评论区未加载")
+            return False
 
-                // 查找所有评论容器
-                const commentItems = document.querySelectorAll('[class*="comment"], [class*="Comment"]');
+        print("  📋 含 'comment' 的类名 (Top 20):")
+        for item in classes[:20]:
+            print(f"     .{item['cls']}  ({item['count']} 个元素)")
 
-                for (const item of commentItems) {
-                    // 跳过没有内容的
-                    const contentEl = item.querySelector('[class*="content"], [class*="text"]');
-                    if (!contentEl || !contentEl.textContent.trim()) continue;
+        # 简单策略：数量最多的类作为根评论
+        self.root_cls = classes[0]["cls"]
+        print(f"\n  ✅ 选定根评论类: .{self.root_cls} ({classes[0]['count']} 个元素)")
 
-                    // 提取评论 ID
-                    let commentId = item.getAttribute('data-id') ||
-                                     item.getAttribute('data-comment-id') ||
-                                     item.querySelector('[class*="id"]')?.textContent ||
-                                     Math.random().toString(36).substr(2, 9);
+        if result.get("sample_html"):
+            print("\n  🔎 第一个评论元素 HTML 片段（前 500 字符）:")
+            print("  " + result["sample_html"][:500].replace("\n", "\n  "))
 
-                    if (seen.has(commentId)) continue;
-                    seen.add(commentId);
+        return True
 
-                    // 提取内容
-                    const content = contentEl.textContent.trim();
+    async def extract_flat_comments(self, page):
+        print("\n  📝 提取扁平评论列表...")
+        if not self.root_cls:
+            print("  ❌ 未确定根评论类，无法提取")
+            return []
 
-                    // 提取点赞数
-                    let likes = 0;
-                    const likeEl = item.querySelector('[class*="like"], [class*="count"], [class*="num"]');
-                    if (likeEl) {
-                        const text = likeEl.textContent.trim();
-                        const num = parseInt(text.replace(/\\D/g, ''));
-                        if (!isNaN(num)) likes = num;
-                    }
+        js = build_extract_js(self.root_cls)
+        comments = await page.evaluate(js)
+        if not comments:
+            print("  ⚠️ 未找到任何评论")
+            return []
 
-                    // 提取作者信息
-                    const authorEl = item.querySelector('[class*="author"], [class*="user"], a[href*="/user/profile/"]');
-                    const author = {
-                        nickname: authorEl?.textContent?.trim() || '未知用户',
-                        avatar: authorEl?.querySelector('img')?.src || ''
-                    };
-
-                    // 提取时间
-                    let createTime = '';
-                    const timeEl = item.querySelector('[class*="time"], time, [datetime]');
-                    if (timeEl) {
-                        createTime = timeEl.textContent.trim() || timeEl.getAttribute('datetime') || '';
-                    }
-
-                    // 检测是否是回复（通过样式或结构判断）
-                    let isReply = false;
-                    let parentId = null;
-
-                    const parentComment = item.closest('[class*="reply"], [class*="sub"]');
-                    if (parentComment) {
-                        isReply = true;
-                        // 尝试找到父评论ID
-                        const parentContainer = parentComment.closest('[class*="comment"]');
-                        if (parentContainer) {
-                            parentId = parentContainer.getAttribute('data-id') ||
-                                         parentContainer.getAttribute('data-comment-id');
-                        }
-                    }
-
-                    comments.push({
-                        id: commentId,
-                        parent_id: parentId,
-                        depth: isReply ? 1 : 0,
-                        content: content,
-                        like_count: likes,
-                        author: author,
-                        create_time: createTime,
-                        is_reply: isReply
-                    });
-                }
-
-                return comments;
-            }
-        ''')
-
-        if not comments_data:
-            print("  ⚠️  未找到评论数据")
-        else:
-            print(f"  ✅ 提取到 {len(comments_data)} 条评论")
-
-        return comments_data
+        print(f"  ✅ 扁平评论数: {len(comments)}")
+        return comments
 
     def build_comment_tree(self, comments):
-        """构建评论树"""
-        # 第一层：顶级评论
-        top_level = [c for c in comments if c['depth'] == 0]
+        """
+        用文本规则识别“回复 XXX : …”，构造树结构。
+        comments: [{id, nickname, content, like_count, create_time}]
+        """
+        # 作者 -> 点赞最高的那条评论（作为被回复 anchor）
+        by_author: dict[str, dict] = {}
+        for c in comments:
+            name = c["nickname"]
+            if name not in by_author or c["like_count"] > by_author[name]["like_count"]:
+                by_author[name] = c
 
-        # 构建树形结构
-        tree = []
-        for comment in top_level:
+        # 初始全部当顶级
+        id2node: dict[str, dict] = {}
+        roots: list[dict] = []
+        for c in comments:
             node = {
-                'comment': comment,
-                'replies': self._build_replies(comment['id'], comments)
+                "id": c["id"],
+                "nickname": c["nickname"],
+                "content": c["content"],
+                "like_count": c["like_count"],
+                "create_time": c["create_time"],
+                "replies": [],
             }
-            tree.append(node)
+            id2node[c["id"]] = node
+            roots.append(node)
 
-        return tree
+        # 识别“回复 XXX : …”
+        reply_pattern = re.compile(r"^回复\s+(.+?)\s*[:：]")
 
-    def _build_replies(self, parent_id, comments):
-        """递归构建子评论"""
-        replies = [c for c in comments if c.get('parent_id') == parent_id]
+        for node in list(roots):  # roots 会被修改，拷贝一份
+            m = reply_pattern.match(node["content"])
+            if not m:
+                continue
+            target_name = m.group(1).strip()
 
-        result = []
-        for reply in replies:
-            node = {
-                'comment': reply,
-                'replies': self._build_replies(reply['id'], comments)
-            }
-            result.append(node)
+            # 避免自己回复自己（这种通常是单纯引用）
+            if target_name == node["nickname"]:
+                continue
 
-        return result
+            anchor = by_author.get(target_name)
+            if not anchor:
+                continue
 
-    def save_json(self, tree, comments_count):
-        """保存为 JSON"""
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            parent = id2node.get(anchor["id"])
+            if not parent:
+                continue
+
+            if node in roots:
+                roots.remove(node)
+            parent["replies"].append(node)
+
+        # 排序：顶级按点赞，回复内部按点赞
+        roots.sort(key=lambda x: x["like_count"], reverse=True)
+        for r in roots:
+            r["replies"].sort(key=lambda x: x["like_count"], reverse=True)
+
+        return roots
+
+    def save_json(self, tree, total):
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_file = OUTPUT_DIR / f"xhs_comments_{self.note_id}_{timestamp}.json"
-
         result = {
-            'note_id': self.note_id,
-            'total_comments': comments_count,
-            'crawl_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'comments': tree
+            "note_id": self.note_id,
+            "total_comments": total,
+            "crawl_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "comments": tree,
         }
-
-        with open(output_file, 'w', encoding='utf-8') as f:
+        with open(output_file, "w", encoding="utf-8") as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
-
         print(f"💾 JSON 已保存: {output_file}")
         return output_file
 
-    def generate_summary(self, comments):
-        """生成统计摘要"""
-        if not comments:
-            return {}
 
-        total = len(comments)
-        top_level = sum(1 for c in comments if c['depth'] == 0)
-        replies = total - top_level
-
-        # 作者统计
-        authors = {}
-        for comment in comments:
-            nickname = comment['author']['nickname']
-            if nickname not in authors:
-                authors[nickname] = {
-                    'count': 0,
-                    'likes': 0,
-                    'comments': []
-                }
-            authors[nickname]['count'] += 1
-            authors[nickname]['likes'] += comment['like_count']
-            authors[nickname]['comments'].append(comment['id'])
-
-        # 活跃作者 Top 5
-        sorted_authors = sorted(
-            authors.items(),
-            key=lambda x: x[1]['count'],
-            reverse=True
-        )[:5]
-
-        # 回复关系统计
-        reply_relations = []
-        for comment in comments:
-            if comment['depth'] == 1 and comment['parent_id']:
-                # 找到父评论
-                parent = next((c for c in comments if c['id'] == comment['parent_id']), None)
-                if parent:
-                    reply_relations.append({
-                        'from': comment['author']['nickname'],
-                        'to': parent['author']['nickname'],
-                        'content': comment['content'][:50],
-                        'time': comment['create_time']
-                    })
-
-        summary = {
-            'total_comments': total,
-            'top_level_comments': top_level,
-            'reply_comments': replies,
-            'unique_authors': len(authors),
-            'top_authors': [
-                {
-                    'nickname': name,
-                    'comment_count': data['count'],
-                    'total_likes': data['likes']
-                }
-                for name, data in sorted_authors
-            ],
-            'sample_reply_relations': reply_relations[:10] if reply_relations else []
-        }
-
-        return summary
+# ==================== 主流程 ====================
 
 
-# ==================== 主程序 ====================
+async def main_async(url: str | None = None, headless: bool = False):
+    print("\n" + "=" * 80)
+    print("小红书笔记评论爬取工具 (HTML 版 - v5)")
+    print("=" * 80)
 
-async def main_async(url: str = None):
-    """异步主程序"""
-
-    print(f"\n{'='*80}")
-    print(f"小红书笔记评论爬取工具 (HTML 版)")
-    print(f"{'='*80}")
-
-    # 获取 Cookie
     print("\n[步骤 1] 加载 Cookie")
     cookie_str = load_cookies()
     if not cookie_str:
         print("❌ 未找到有效 Cookie")
         return
-
     print("✅ Cookie 已加载")
 
-    # 提取笔记 ID
     print("\n[步骤 2] 解析笔记链接")
     if not url:
         print("请输入小红书笔记链接:")
@@ -337,144 +392,183 @@ async def main_async(url: str = None):
     if not note_id:
         print(f"❌ 无法从链接提取笔记 ID: {url}")
         return
-
     print(f"✅ 笔记 ID: {note_id}")
 
-    # 构建页面 URL（保留完整 URL，包括 xsec_token）
-    # 如果原链接包含 xsec_token，则使用原链接
-    if '?xsec_token=' in url:
-        page_url = url
-    else:
-        page_url = f"https://www.xiaohongshu.com/explore/{note_id}"
-
+    page_url = url if "?xsec_token=" in url else f"https://www.xiaohongshu.com/explore/{note_id}"
     print(f"📝 页面 URL: {page_url}")
 
-    # 爬取评论
     print("\n[步骤 3] 访问页面并提取评论")
     print("-" * 80)
+    print(f"浏览器模式: {'无头模式' if headless else '有头模式'}")
 
     extractor = XHSCommentExtractor(note_id)
 
     async with async_playwright() as p:
-        # 启动浏览器
-        browser = await p.chromium.launch(headless=False)
-
-        # 解析 Cookie
+        browser = await p.chromium.launch(headless=headless)
         cookies = parse_cookies(cookie_str)
 
-        # 创建上下文
         context = await browser.new_context(
-            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            viewport={'width': 1920, 'height': 1080}
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+            viewport={"width": 1920, "height": 1080},
         )
-
-        # 添加 Cookie
         if cookies:
             await context.add_cookies(cookies)
             print(f"✅ 已设置 {len(cookies)} 个 Cookie")
 
         page = await context.new_page()
-
-        # 访问页面
-        print(f"\n📡 正在访问笔记页面...")
+        print("\n📡 正在访问笔记页面...")
         print(f"   {page_url}")
 
         try:
-            await page.goto(page_url, wait_until='networkidle', timeout=60000)
+            await page.goto(page_url, wait_until="networkidle", timeout=60000)
             print("✅ 页面加载成功")
+            await asyncio.sleep(3)
 
-            # 滚动加载评论
-            print("\n  🔄 滚动加载评论...")
-            await asyncio.sleep(2)  # 等待初始加载
-
-            # 滚动到底部多次，确保评论加载
-            for i in range(3):
-                await page.evaluate('window.scrollBy(0, window.innerHeight)')
-                await asyncio.sleep(1.5)
-
-            print("  ✅ 滚动完成")
-
-            # 提取评论
-            comments = await extractor.extract_comments_from_html(page)
-
-            if not comments:
-                print("\n❌ 未提取到任何评论")
+            # 诊断 DOM
+            ok = await extractor.diagnose_dom(page)
+            if not ok:
+                html = await page.content()
+                debug_file = OUTPUT_DIR / f"debug_{note_id}.html"
+                with open(debug_file, "w", encoding="utf-8") as f:
+                    f.write(html)
+                print(f"   调试 HTML 已保存: {debug_file}")
                 await browser.close()
                 return
 
-            # 构建树形结构
-            print("\n  🌳 构建评论树...")
-            tree = extractor.build_comment_tree(comments)
+            # 深度滚动 + 展开
+            print("\n  🔄 正在深度加载评论（滚动 + 展开所有回复）...")
+            count_sel = f".{extractor.root_cls}"
+
+            last_count = 0
+            stable_rounds = 0
+            MAX_STABLE = 5
+            MAX_LOOPS = 60
+
+            for loop_i in range(MAX_LOOPS):
+                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                await asyncio.sleep(1.5)
+
+                # 安全点击“展开/更多回复”，避免误点 a 链接
+                try:
+                    clicked = await page.evaluate(
+                        r"""
+                    (function() {
+                        var clicked = 0;
+                        var keywords = ['展开', '查看更多回复', '更多回复', '展开回复'];
+                        var els = document.querySelectorAll('span, div, button');
+                        for (var i = 0; i < els.length; i++) {
+                            var el = els[i];
+                            var txt = el.textContent.trim();
+                            if (txt.length < 15 && keywords.some(function(k){ return txt.indexOf(k) !== -1; })) {
+                                if (el.tagName !== 'A' && !el.closest('a') && !el.closest('[href]')) {
+                                    try { el.click(); clicked++; } catch(e) {}
+                                }
+                            }
+                        }
+                        return clicked;
+                    })()
+                    """
+                    )
+                    if clicked > 0:
+                        await asyncio.sleep(0.8)
+                except Exception:
+                    pass
+
+                # 防止跳转到用户主页
+                current_url = page.url
+                if note_id not in current_url:
+                    print(f"  ⚠️ 检测到页面跳转 ({current_url[:60]}...)，正在返回...")
+                    await page.goto(page_url, wait_until="networkidle", timeout=30000)
+                    await asyncio.sleep(2)
+
+                current_count = await page.evaluate(
+                    f"document.querySelectorAll({json.dumps(count_sel)}).length"
+                )
+
+                if current_count > last_count:
+                    print(f"     [{loop_i+1}] 已发现 {current_count} 条评论项...")
+                    last_count = current_count
+                    stable_rounds = 0
+                else:
+                    stable_rounds += 1
+                    if stable_rounds >= MAX_STABLE:
+                        print(f"     连续 {MAX_STABLE} 次无新增，判定加载完毕")
+                        break
+
+            print(f"  ✅ 滚动完成，共 {last_count} 条评论项")
+
+            # 扁平提取
+            flat_comments = await extractor.extract_flat_comments(page)
+            if not flat_comments:
+                html = await page.content()
+                debug_file = OUTPUT_DIR / f"debug_{note_id}.html"
+                with open(debug_file, "w", encoding="utf-8") as f:
+                    f.write(html)
+                print(f"⚠️ 未提取到评论，调试 HTML 已保存: {debug_file}")
+                await browser.close()
+                return
+
+            # 构建树
+            print("\n  🌳 构建评论树（按赞数排序 + 回复挂载）...")
+            tree = extractor.build_comment_tree(flat_comments)
             print("  ✅ 评论树构建完成")
 
             # 保存 JSON
             print("\n[步骤 4] 保存结果")
-            json_file = extractor.save_json(tree, len(comments))
+            extractor.save_json(tree, len(flat_comments))
 
-            # 生成摘要
-            print("\n[步骤 5] 生成统计摘要")
-            summary = extractor.generate_summary(comments)
-
-            print(f"\n{'-'*80}")
-            print(f"统计摘要:")
-            print(f"{'-'*80}")
-            print(f"  总评论数: {summary['total_comments']}")
-            print(f"  顶级评论: {summary['top_level_comments']}")
-            print(f"  回复评论: {summary['reply_comments']}")
-            print(f"  独一作者: {summary['unique_authors']}")
-            print(f"\n  活跃作者 Top 5:")
-            for i, author in enumerate(summary['top_authors'], 1):
-                print(f"    {i}. {author['nickname']} - {author['comment_count']} 条评论，{author['total_likes']} 嵌")
-
-            if summary['sample_reply_relations']:
-                print(f"\n  回复关系示例:")
-                for i, reply in enumerate(summary['sample_reply_relations'][:5], 1):
-                    print(f"    {i}. {reply['from']} 回复 {reply['to']}")
-                    print(f"       \"{reply['content']}\"")
-                    print(f"       时间: {reply['create_time']}")
-
-            # 保存摘要
-            summary_file = json_file.with_suffix('.summary.json')
-            with open(summary_file, 'w', encoding='utf-8') as f:
-                json.dump(summary, f, ensure_ascii=False, indent=2)
-            print(f"\n💾 摘要已保存: {summary_file}")
+            # 简要统计
+            print("\n[步骤 5] 统计摘要")
+            top_level = len(tree)
+            reply_count = sum(len(t["replies"]) for t in tree)
+            print("-" * 80)
+            print(f"  总评论数（含回复）: {len(flat_comments)}")
+            print(f"  顶级评论数        : {top_level}")
+            print(f"  回复评论数        : {reply_count}")
+            print("-" * 80)
 
             await browser.close()
 
         except Exception as e:
             print(f"\n❌ 爬取失败: {e}")
             import traceback
+
             traceback.print_exc()
-            await browser.close()
-            return
+            try:
+                await browser.close()
+            except Exception:
+                pass
 
-    print(f"\n{'='*80}")
-    print(f"✅ 完成！")
-    print(f"{'='*80}\n")
+    print("\n" + "=" * 80)
+    print("✅ 完成！")
+    print("=" * 80 + "\n")
 
 
-def main(url: str = None):
-    """同步入口"""
-    asyncio.run(main_async(url))
+def main(url: str | None = None, headless: bool = False):
+    asyncio.run(main_async(url, headless))
 
 
 if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="小红书笔记评论爬取工具 (HTML 版)",
-        formatter_class=argparse.RawDescriptionHelpFormatter
+        description="小红书笔记评论爬取工具 (HTML 版 - v5)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-
-    parser.add_argument('url', nargs='?', help='小红书笔记链接')
-
+    parser.add_argument("url", nargs="?", help="小红书笔记链接")
+    parser.add_argument("--headless", action="store_true", help="无头模式")
     args = parser.parse_args()
 
     try:
-        main(args.url)
+        main(args.url, args.headless)
     except KeyboardInterrupt:
         print("\n\n用户中断程序")
     except Exception as e:
         print(f"\n❌ 程序出错: {e}")
         import traceback
+
         traceback.print_exc()

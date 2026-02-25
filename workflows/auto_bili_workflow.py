@@ -1,30 +1,36 @@
 #!/usr/bin/env python3
 """
-B站用户视频自动化工作流程
+B站视频自动化工作流程
 
 一键完成：
-1. 抓取用户视频列表
-2. 批量提取字幕
+1. 抓取用户视频列表 / 处理单个视频
+2. 批量提取字幕 / 提取单个视频字幕
 3. 生成AI摘要报告
 
 使用示例:
     # 基本用法 - 获取最新10个视频并完成全部流程
-    python utils/auto_bili_workflow.py --url "https://space.bilibili.com/3546607314274766" --count 10
+    python workflows/auto_bili_workflow.py --url "https://space.bilibili.com/3546607314274766" --count 10
+
+    # 新增：直接分析单个视频链接
+    python workflows/auto_bili_workflow.py --video-url "https://www.bilibili.com/video/BV1xxxx"
+
+    # 新增：分析单个视频并指定模型
+    python workflows/auto_bili_workflow.py --video-url "https://www.bilibili.com/video/BV1xxxx" --model flash
 
     # 增量模式 - 跳过已处理的视频
-    python utils/auto_bili_workflow.py --user "用户名" --incremental
+    python workflows/auto_bili_workflow.py --user "用户名" --incremental
 
     # 指定 Gemini 模型和并发数
-    python utils/auto_bili_workflow.py --url "https://space.bilibili.com/3546607314274766" --count 20 --model flash -j 5
+    python workflows/auto_bili_workflow.py --url "https://space.bilibili.com/3546607314274766" --count 20 --model flash -j 5
 
     # 从已有CSV开始，跳过视频抓取
-    python utils/auto_bili_workflow.py --csv "MediaCrawler/bilibili_videos_output/用户名.csv" --count 20
+    python workflows/auto_bili_workflow.py --csv "MediaCrawler/bilibili_videos_output/用户名.csv" --count 20
 
     # 仅抓取视频和提取字幕，不生成AI摘要
-    python utils/auto_bili_workflow.py --url "https://space.bilibili.com/3546607314274766" --count 30 --no-summary
+    python workflows/auto_bili_workflow.py --url "https://space.bilibili.com/3546607314274766" --count 30 --no-summary
 
     # 仅生成AI摘要（已有字幕）
-    python utils/auto_bili_workflow.py --user "用户名" --summary-only
+    python workflows/auto_bili_workflow.py --user "用户名" --summary-only
 """
 
 import argparse
@@ -328,6 +334,225 @@ def process_fallback_videos(csv_path: Path, model: str = 'flash-lite', limit: in
         return False
 
 
+# ==================== 处理单个视频 ====================
+
+async def fetch_single_subtitle(bvid: str, title: str, author_name: str) -> Path:
+    """
+    直接提取单个视频的字幕（不创建临时CSV）
+
+    Args:
+        bvid: BV号
+        title: 视频标题
+        author_name: 作者名
+
+    Returns:
+        字幕文件路径，失败返回 None
+    """
+    try:
+        # 动态导入 batch_subtitle_fetch 模块
+        sys.path.insert(0, str(SUBTITLE_FETCH_SCRIPT.parent))
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "batch_subtitle_fetch",
+            SUBTITLE_FETCH_SCRIPT
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        # 调用 fetch_subtitle_srt 函数
+        author_dir = SUBTITLE_OUTPUT / author_name
+        author_dir.mkdir(parents=True, exist_ok=True)
+
+        print(f"📁 字幕保存目录: {author_dir}")
+
+        result = await module.fetch_subtitle_srt(bvid, title, author_dir)
+
+        if result['success']:
+            print(f"✅ 字幕提取成功")
+            print(f"   路径: {result['srt_path']}")
+            return Path(result['srt_path'])
+        else:
+            print(f"❌ 字幕提取失败: {result.get('error', '未知错误')}")
+            return None
+
+    except Exception as e:
+        print(f"❌ 字幕提取异常: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+async def process_single_video(video_url: str, model: str = 'flash-lite') -> bool:
+    """
+    处理单个视频：提取字幕 + 生成AI摘要
+
+    Args:
+        video_url: B站视频链接
+        model: Gemini模型
+
+    Returns:
+        是否成功
+    """
+    # 提取BV号
+    bvid = extract_bvid_from_url(video_url)
+    if not bvid:
+        print(f"❌ 无法从URL提取BV号: {video_url}")
+        return False
+
+    print(f"\n" + "=" * 70)
+    print("🎬 单个视频处理模式")
+    print("=" * 70)
+    print(f"🔗 视频链接: {video_url}")
+    print(f"🆔 BV号: {bvid}")
+    print(f"🤖 模型: {model}")
+
+    # 获取视频信息（标题、作者）
+    print(f"\n📋 获取视频信息...")
+    try:
+        import requests
+
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Referer': 'https://www.bilibili.com'
+        }
+        api_url = f"https://api.bilibili.com/x/web-interface/view?bvid={bvid}"
+        response = requests.get(api_url, headers=headers, timeout=10)
+        data = response.json()
+
+        if data.get('code') != 0:
+            print(f"❌ API请求失败: {data.get('message', '未知错误')}")
+            return False
+
+        video_info = data.get('data', {})
+        title = video_info.get('title', '未知标题')
+        author = video_info.get('owner', {}).get('name', '未知作者')
+
+        # 清理文件名
+        safe_author = re.sub(r'[\/\\:*?"<>|]', '_', author)
+
+        print(f"  📝 标题: {title}")
+        print(f"  👤 作者: {author}")
+
+        # 步骤1: 直接提取字幕（不创建临时CSV）
+        print(f"\n📝 提取字幕...")
+        subtitle_file = await fetch_single_subtitle(bvid, title, safe_author)
+
+        if not subtitle_file:
+            print(f"\n⚠️ 字幕提取失败")
+            return False
+
+        # 步骤2: 生成AI摘要
+        print(f"\n🤖 生成AI摘要...")
+        summary_success = generate_single_video_summary(safe_author, subtitle_file, title, bvid, model=model)
+
+        if summary_success:
+            print(f"\n" + "=" * 70)
+            print(f"🎉 单个视频处理完成!")
+            print(f"=" * 70)
+            print(f"\n📁 输出文件:")
+            print(f"  - 字幕: {subtitle_file}")
+            print(f"  - AI摘要: {SUBTITLE_OUTPUT / safe_author / f'{title}_AI总结.md'}")
+            return True
+        else:
+            return False
+
+    except Exception as e:
+        print(f"❌ 处理失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+# ==================== 生成单个视频AI摘要 ====================
+
+def generate_single_video_summary(author_name: str, srt_file: Path = None, title: str = "", bvid: str = "",
+                                    model: str = 'flash-lite') -> bool:
+    """
+    为单个视频生成AI摘要（简化版）
+
+    Args:
+        author_name: 作者名
+        srt_file: 字幕文件路径
+        title: 视频标题
+        bvid: BV号
+        model: Gemini模型
+
+    Returns:
+        是否成功
+    """
+    if not srt_file or not srt_file.exists():
+        print(f"❌ 字幕文件不存在: {srt_file}")
+        return False
+
+    print(f"📄 字幕文件: {srt_file}")
+    print(f"📝 视频标题: {title}")
+    print(f"🆔 BV号: {bvid}")
+
+    # 读取字幕内容
+    try:
+        with open(srt_file, 'r', encoding='utf-8') as f:
+            subtitle_text = f.read()
+    except Exception as e:
+        print(f"❌ 读取字幕失败: {e}")
+        return False
+
+    # 简化：调用 Gemini 生成摘要
+    try:
+        import sys
+        sys.path.insert(0, str(SUMMARY_SCRIPT.parent))
+        import importlib.util
+
+        # 导入 subtitle_analyzer 模块
+        spec = importlib.util.spec_from_file_location(
+            "subtitle_analyzer",
+            SUMMARY_SCRIPT
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        # 创建摘要生成器
+        analyzer = module.GeminiSummarizer(model=model)
+
+        # 生成摘要
+        print(f"\n🤖 正在生成摘要...")
+        result = analyzer.generate_summary(subtitle_text, title)
+
+        # 保存摘要到 MD 文件
+        output_dir = SUBTITLE_OUTPUT / author_name
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        summary_md = output_dir / f"{title}_AI总结.md"
+
+        md_content = f"""# {title}
+
+## 📋 视频信息
+- **BV号**: {bvid}
+- **作者**: {author_name}
+- **生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+---
+
+{result.get('summary', '')}
+
+---
+
+*本报告由 AI 自动生成，基于视频字幕内容进行分析。*
+"""
+
+        with open(summary_md, 'w', encoding='utf-8') as f:
+            f.write(md_content)
+
+        print(f"✅ 摘要已保存: {summary_md}")
+        print(f"   Token数: {result.get('tokens', 'N/A')}")
+        return True
+
+    except Exception as e:
+        print(f"❌ AI摘要生成失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 # ==================== 工具函数 ====================
 
 def extract_uid_from_url(url: str) -> str:
@@ -343,6 +568,33 @@ def extract_uid_from_url(url: str) -> str:
     return None
 
 
+def extract_bvid_from_url(url: str) -> str:
+    """从B站视频链接中提取BV号"""
+    try:
+        # 移除查询参数
+        if '?' in url:
+            url = url.split('?')[0]
+
+        # 匹配 BV 号（支持 b23.tv 和 bilibili.com）
+        patterns = [
+            r'/BV([a-zA-Z0-9]+)',  # /BV1234567890
+            r'BV([a-zA-Z0-9]+)',   # BV1234567890
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, url)
+            if match:
+                return 'BV' + match.group(1)
+    except Exception:
+        pass
+    return None
+
+
+def is_video_url(url: str) -> bool:
+    """判断是否为视频链接"""
+    return 'bilibili.com/video/' in url or 'b23.tv' in url or extract_bvid_from_url(url) is not None
+
+
 # ==================== 主程序 ====================
 
 def main():
@@ -352,32 +604,39 @@ def main():
         epilog="""
 使用示例:
   # 基本用法 - 获取最新10个视频
-  python utils/auto_bili_workflow.py --url "https://space.bilibili.com/3546607314274766" --count 10
+  python workflows/auto_bili_workflow.py --url "https://space.bilibili.com/3546607314274766" --count 10
+
+  # 【新增】直接分析单个视频链接
+  python workflows/auto_bili_workflow.py --video-url "https://www.bilibili.com/video/BV1xxxx"
+
+  # 【新增】分析单个视频并指定模型
+  python workflows/auto_bili_workflow.py --video-url "https://www.bilibili.com/video/BV1xxxx" --model flash
 
   # 增量模式 - 跳过已处理的视频
-  python utils/auto_bili_workflow.py --user "用户名" --incremental
+  python workflows/auto_bili_workflow.py --user "用户名" --incremental
 
   # 指定 Gemini 模型和并发数
-  python utils/auto_bili_workflow.py --url "https://space.bilibili.com/3546607314274766" --count 20 --model flash -j 5
+  python workflows/auto_bili_workflow.py --url "https://space.bilibili.com/3546607314274766" --count 20 --model flash -j 5
 
   # 从已有CSV开始，跳过视频抓取
-  python utils/auto_bili_workflow.py --csv "MediaCrawler/bilibili_videos_output/用户名.csv" --count 20
+  python workflows/auto_bili_workflow.py --csv "bilibili_videos_output/用户名.csv" --count 20
 
   # 仅抓取视频和提取字幕，不生成AI摘要
-  python utils/auto_bili_workflow.py --url "https://space.bilibili.com/3546607314274766" --count 30 --no-summary
+  python workflows/auto_bili_workflow.py --url "https://space.bilibili.com/3546607314274766" --count 30 --no-summary
 
   # 仅生成AI摘要（已有字幕）
-  python utils/auto_bili_workflow.py --user "用户名" --summary-only
+  python workflows/auto_bili_workflow.py --user "用户名" --summary-only
 
   # 追加模式 - 将新结果追加到现有摘要
-  python utils/auto_bili_workflow.py --user "用户名" --append --incremental
+  python workflows/auto_bili_workflow.py --user "用户名" --append --incremental
 
   # 启用无字幕视频备选方案（视频下载+Gemini分析）
-  python utils/auto_bili_workflow.py --csv "bilibili_videos_output/用户名.csv" --enable-fallback
+  python workflows/auto_bili_workflow.py --csv "bilibili_videos_output/用户名.csv" --enable-fallback
         """
     )
 
     parser.add_argument("--url", "-u", help="B站用户主页链接")
+    parser.add_argument("--video-url", "-v", help="B站视频链接（直接分析单个视频）")
     parser.add_argument("--csv", "-c", help="直接使用已有的CSV文件（跳过步骤1）")
     parser.add_argument("--user", help="指定用户名（用于步骤2和3）")
     parser.add_argument("--count", "-n", type=int, default=None,
@@ -405,10 +664,25 @@ def main():
     args = parser.parse_args()
 
     # 验证参数
-    if not args.summary_only and not args.csv and not args.url:
-        print("❌ 错误: 必须提供 --url, --csv 或使用 --summary-only")
+    if not args.summary_only and not args.csv and not args.url and not args.video_url:
+        print("❌ 错误: 必须提供 --url, --video-url, --csv 或使用 --summary-only")
         parser.print_help()
         return 1
+
+    # 处理单个视频链接
+    if args.video_url:
+        print("\n" + "=" * 70)
+        print("🚀 B站单个视频分析")
+        print("=" * 70)
+        print(f"⏰ 开始时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+        success = asyncio.run(process_single_video(args.video_url, args.model))
+
+        if success:
+            print(f"\n⏰ 结束时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            return 0
+        else:
+            return 1
 
     print("\n" + "=" * 70)
     print("🚀 B站用户视频自动化工作流程")

@@ -9,18 +9,13 @@ __pycache__/
 # API密钥和敏感配置文件
 config.json
 config_*.py
-config/bot_config.json
-config/telegram_config.json
 *_secrets.py
 api_keys.py
 
-# 敏感配置文件夹
-config/config*.py
-config/*_config.json
-config/*_config.yaml
+# 整个配置文件夹（敏感信息）
+config/
 
 # Cookie文件 (包含敏感认证信息)
-config/cookies*.txt
 cookies_*.txt
 
 # 输出目录
@@ -39,7 +34,3 @@ downloaded_videos/
 *.mp4
 *.mp4.part
 一键下载.bat
-
-# Cookie files (sensitive)
-config/cookies.txt
-cookies_*.txt

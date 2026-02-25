@@ -664,16 +664,16 @@ async def cmd_scrape_bilibili(update: Update, context: ContextTypes.DEFAULT_TYPE
                     f"  • 最大视频数: {max_videos}\n\n"
                     f"📝 以下是报告摘要:\n\n"
                     f"{summary}\n\n"
-                    f"📁 完整报告已保存到: {report_path.name}"
+                    f"📁 完整报告已通过文件发送"
                 )
 
-                # 如果内容太长，分批发送剩余部分
-                if len(report_content) > len(summary):
-                    remaining_content = report_content[len(summary):]
-                    # 分割成多个消息，每个不超过4000字符
-                    chunks = [remaining_content[i:i+4000] for i in range(0, len(remaining_content), 4000)]
-                    for chunk in chunks:
-                        await update.message.reply_text(f"```\n{chunk}\n```", parse_mode='Markdown')
+                # 发送完整报告文件
+                line_count = len(report_content.split('\n'))
+                await update.message.reply_document(
+                    document=str(report_path),
+                    caption=f"📄 B站首页推荐分析报告\n• 刷新次数: {refresh_count}\n• 采集视频数: {line_count} 行",
+                    filename=report_path.name
+                )
             else:
                 await status_msg.edit_text(
                     f"✅ 刷取完成，但未找到报告文件\n\n"
@@ -803,20 +803,35 @@ async def cmd_scrape_xiaohongshu(update: Update, context: ContextTypes.DEFAULT_T
             f"📡 正在采集推荐内容..."
         )
 
-        # 执行采集脚本
+        # 执行采集脚本（设置环境变量禁用缓冲）
         process = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            cwd=str(Path(__file__).parent.parent)
+            cwd=str(Path(__file__).parent.parent),
+            env={**os.environ, 'PYTHONUNBUFFERED': '1', 'PYTHONIOENCODING': 'utf-8'}
         )
 
         # 保存进程对象，以便 /stop 可以终止它
         user_manager.set_process(user_id, process)
 
-        # 等待完成
+        # 等待完成（添加超时：5分钟）
         try:
-            stdout, stderr = await process.communicate()
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=300)
+        except asyncio.TimeoutError:
+            await process.terminate()
+            await process.wait()
+            await status_msg.edit_text("⚠️ 执行超时（5分钟）\n\n💡 任务可能已完成，请检查报告文件")
+            # 尝试读取已生成的报告
+            date_str = datetime.now().strftime('%Y-%m-%d')
+            report_path = Path(__file__).parent.parent / "output" / "xiaohongshu_homepage" / f"xiaohongshu_homepage_{date_str}_AI报告.md"
+            if report_path.exists():
+                await status_msg.edit_text(
+                    f"⚠️ 执行超时，但发现报告文件\n\n"
+                    f"📁 报告已保存: {report_path.name}\n\n"
+                    f"请手动查看完整报告"
+                )
+            return
         except (asyncio.CancelledError, BrokenPipeError, OSError, ProcessLookupError) as e:
             # 进程被终止（可能是用户使用 /stop 命令）
             task_id = user_manager.active_tasks.get(user_id, '')
@@ -826,8 +841,8 @@ async def cmd_scrape_xiaohongshu(update: Update, context: ContextTypes.DEFAULT_T
                 await status_msg.edit_text(f"❌ 进程异常终止: {type(e).__name__}")
             return
 
-        stdout_text = stdout.decode('utf-8', errors='ignore')
-        stderr_text = stderr.decode('utf-8', errors='ignore')
+        stdout_text = stdout.decode('utf-8', errors='ignore') if stdout else ''
+        stderr_text = stderr.decode('utf-8', errors='ignore') if stderr else ''
 
         # 如果有错误输出，先显示
         if stderr_text:
@@ -883,17 +898,17 @@ async def cmd_scrape_xiaohongshu(update: Update, context: ContextTypes.DEFAULT_T
                         success_msg += debug_section
 
                 success_msg += f"📝 以下是报告摘要:\n\n{summary}\n\n"
-                success_msg += f"📁 完整报告已保存到: {report_path.name}"
+                success_msg += f"📁 完整报告已通过文件发送"
 
                 await status_msg.edit_text(success_msg)
 
-                # 如果内容太长，分批发送剩余部分
-                if len(report_content) > len(summary):
-                    remaining_content = report_content[len(summary):]
-                    # 分割成多个消息，每个不超过4000字符
-                    chunks = [remaining_content[i:i+4000] for i in range(0, len(remaining_content), 4000)]
-                    for chunk in chunks:
-                        await update.message.reply_text(f"```\n{chunk}\n```", parse_mode='Markdown')
+                # 发送完整报告文件
+                line_count = len(report_content.split('\n'))
+                await update.message.reply_document(
+                    document=str(report_path),
+                    caption=f"📄 小红书推荐分析报告\n• 刷新次数: {refresh_count}\n• 采集笔记: {line_count} 行",
+                    filename=report_path.name
+                )
             else:
                 await status_msg.edit_text(
                     f"✅ 刷取完成，但未找到报告文件\n\n"

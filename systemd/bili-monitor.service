@@ -1,0 +1,15 @@
+[Unit]
+Description=B站UP主监控系统
+After=network.target
+
+[Service]
+Type=simple
+User=your_user
+WorkingDirectory=/path/to/biliSub
+Environment=PATH=/path/to/conda/envs/bilisub/bin
+ExecStart=/path/to/conda/envs/bilisub/bin/python bots/bili_upstream_monitor.py --loop
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -460,41 +460,66 @@ def generate_ai_report(notes, output_dir):
         for i, note in enumerate(notes)  # 分析所有笔记
     ])
 
-    prompt = f"""你是一个专业的社交媒体内容分析师。请分析以下小红书推荐内容，生成一份详细的趋势报告。
+    prompt = f"""你是一个专业的社交媒体内容分析师。请分析以下小红书推荐内容，生成一份价值评估报告。
 
 小红书推荐内容：
 {notes_text}
 
-请生成以下格式的报告：
+请按以下格式输出：
 
-## 📊 小红书推荐趋势分析
+## 📊 小红书推荐内容分析
 
-### 🎯 内容概览
+### 🎯 采集概览
 - 采集笔记数：{len(notes)}篇
 - 视频占比：{sum(1 for n in notes if n.get('类型') == 'video')}篇 ({sum(1 for n in notes if n.get('类型') == 'video')/len(notes)*100:.1f}%)
 - 图文占比：{sum(1 for n in notes if n.get('类型') == 'image')}篇 ({sum(1 for n in notes if n.get('类型') == 'image')/len(notes)*100:.1f}%)
 - 爬取批次：共{max((n.get('爬取批次', 1) for n in notes), default=1)}次刷新
 
-### 🔥 热门主题（Top 5）
-基于笔记标题和内容，提取最受欢迎的5个主题
+---
 
-### 👥 热门作者（Top 5）
-列举出现最频繁的5个作者，标注各自出现次数和平均点赞数
+### 📝 全部笔记列表（按价值排序）
 
-### 📈 趋势分析
-基于所有笔记数据，分析当前小红书推荐的内容趋势：
-- 热门话题分布
-- 内容偏好特征
-- 受欢迎的内容类型
-- 不同爬取批次的内容差异（如果明显）
+| 排名 | 标题 | 作者 | 类型 | 点赞 | 价值评分(1-10) | 价值理由 | 链接 |
+|------|------|------|------|------|---------------|----------|------|
+（按价值从高到低排序所有笔记，价值评分综合参考：点赞数、内容质量、实用性、独特性）
 
-### 💎 值得关注的笔记
-综合点赞数、内容质量，推荐3-5个值得深入阅读的笔记（附完整链接和推荐理由）
 
-### 📋 数据洞察（可选）
-如果有特别有趣的数据发现，请在此说明
+### 📊 风格分类分析
 
-请确保报告结构完整，每个部分都要有实质内容，数据引用要准确。"""
+| 风格类别 | 包含笔记数 | 占比 | 代表笔记 | 特征描述 |
+|----------|-----------|------|----------|----------|
+（将笔记按风格分类，如：AI技术、职场成长、生活记录、娱乐休闲、商业营销等）
+
+
+### 💎 价值排行榜 Top 10
+
+1. **[标题]**
+   - 作者: [作者名]
+   - 点赞: [数字]
+   - 价值评分: [1-10]
+   - 价值理由: [详细说明为什么有价值]
+   - 链接: [完整链接]
+
+（列出价值最高的10个笔记）
+
+
+### 🔍 深度分析
+
+**高价值内容特征**:
+- 总结高价值笔记的共同特点
+
+**低价值内容特征**:
+- 总结低价值笔记的问题
+
+**内容趋势洞察**:
+- 分析当前小红书推荐的内容趋势和机会点
+
+
+请确保：
+1. 每个笔记都有价值评分和理由
+2. 表格完整，包含所有笔记
+3. 价值评分基于内容质量而非仅看点赞数
+4. 链接使用完整链接格式"""
 
     try:
         if use_new_sdk:
@@ -509,9 +534,9 @@ def generate_ai_report(notes, output_dir):
             response = model.generate_content(prompt)
             report = response.text if hasattr(response, 'text') and response.text else "生成失败"
 
-        # 保存报告
-        date_str = datetime.now().strftime('%Y-%m-%d')
-        report_path = output_dir / f"xiaohongshu_homepage_{date_str}_AI报告.md"
+        # 保存报告（包含时间戳，避免同一天多次运行覆盖）
+        datetime_str = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        report_path = output_dir / f"xiaohongshu_homepage_{datetime_str}_AI报告.md"
         with open(report_path, 'w', encoding='utf-8') as f:
             f.write(report)
 

@@ -1,0 +1,167 @@
+{
+  "note_id": "699e557e000000001d024d0e",
+  "total_comments": 10,
+  "crawl_time": "2026-02-25 17:21:48",
+  "comments": [
+    {
+      "comment": {
+        "id": "9b84tzvlc",
+        "parent_id": null,
+        "depth": 0,
+        "content": "claude app 升级一下，电脑的 terminal 里面的命令行配置好 /remote-control 之后，最好在 claude 的对应会话里面跟它沟通一下，然后刷新手机端的 code 列表就出来了",
+        "like_count": 2,
+        "author": {
+          "nickname": "开发者.Meepo作者",
+          "avatar": ""
+        },
+        "create_time": "",
+        "is_reply": false
+      },
+      "replies": []
+    },
+    {
+      "comment": {
+        "id": "81kh93t9s",
+        "parent_id": null,
+        "depth": 0,
+        "content": "有没有第三方工具支持这个功能，便利api用户",
+        "like_count": 1,
+        "author": {
+          "nickname": "LeeXeo",
+          "avatar": ""
+        },
+        "create_time": "",
+        "is_reply": false
+      },
+      "replies": []
+    },
+    {
+      "comment": {
+        "id": "cnfnckg6v",
+        "parent_id": null,
+        "depth": 0,
+        "content": "但是据说 手机端的 auth 和 cli 不一样。所有用了 app 更容易封，我之前连封 3 个 max 给我整的只敢用 cli 了，那种伪装 auth token 的也不敢用",
+        "like_count": 1,
+        "author": {
+          "nickname": "whisper",
+          "avatar": ""
+        },
+        "create_time": "",
+        "is_reply": false
+      },
+      "replies": []
+    },
+    {
+      "comment": {
+        "id": "tkhc4emnm",
+        "parent_id": null,
+        "depth": 0,
+        "content": "手机端怎么连接呢？我没找到能扫码的地方",
+        "like_count": 2,
+        "author": {
+          "nickname": "Sibelius",
+          "avatar": ""
+        },
+        "create_time": "",
+        "is_reply": false
+      },
+      "replies": []
+    },
+    {
+      "comment": {
+        "id": "jzgyh4ht8",
+        "parent_id": null,
+        "depth": 0,
+        "content": "点进去没有啊，难道是我 cli 没更新？",
+        "like_count": 0,
+        "author": {
+          "nickname": "养马到破产",
+          "avatar": ""
+        },
+        "create_time": "",
+        "is_reply": false
+      },
+      "replies": []
+    },
+    {
+      "comment": {
+        "id": "mgr54qcke",
+        "parent_id": null,
+        "depth": 0,
+        "content": "max 也用不了啊",
+        "like_count": 0,
+        "author": {
+          "nickname": "Ruuuuuu",
+          "avatar": ""
+        },
+        "create_time": "",
+        "is_reply": false
+      },
+      "replies": []
+    },
+    {
+      "comment": {
+        "id": "wa6ez9sem",
+        "parent_id": null,
+        "depth": 0,
+        "content": "可以选模型吗？ codex cloud不可以",
+        "like_count": 0,
+        "author": {
+          "nickname": "DanielTTY",
+          "avatar": ""
+        },
+        "create_time": "",
+        "is_reply": false
+      },
+      "replies": []
+    },
+    {
+      "comment": {
+        "id": "n90agaosd",
+        "parent_id": null,
+        "depth": 0,
+        "content": "请问您这边是怎么购入的呀，苦于不知道怎么购买，也不知道怎么弄国外卡",
+        "like_count": 0,
+        "author": {
+          "nickname": "小八喵",
+          "avatar": ""
+        },
+        "create_time": "",
+        "is_reply": false
+      },
+      "replies": []
+    },
+    {
+      "comment": {
+        "id": "1smgx7efn",
+        "parent_id": null,
+        "depth": 0,
+        "content": "我还让cc给我做了一个呢白做了",
+        "like_count": 1,
+        "author": {
+          "nickname": "细雨清风",
+          "avatar": ""
+        },
+        "create_time": "",
+        "is_reply": false
+      },
+      "replies": []
+    },
+    {
+      "comment": {
+        "id": "76rm61ogn",
+        "parent_id": null,
+        "depth": 0,
+        "content": "就是可以找一个海外 vps 部署，然后国内远程调用？",
+        "like_count": 0,
+        "author": {
+          "nickname": "布肥熊组",
+          "avatar": ""
+        },
+        "create_time": "",
+        "is_reply": false
+      },
+      "replies": []
+    }
+  ]
+}

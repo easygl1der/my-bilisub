@@ -1,0 +1,126 @@
+async def cmd_read(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Read and send files command"""
+    user_id = update.effective_user.id
+
+    # Check authorization
+    if ALLOWED_USERS and user_id not in ALLOWED_USERS:
+        await update.message.reply_text("❌ 未授权用户")
+        return
+
+    # Parse input
+    args = context.args if context.args else []
+    if not args:
+        await update.message.reply_text(
+            "❌ 请提供要读取的目录\n\n"
+            "用法: `/read <目录路径>`\n\n"
+            "示例:\n"
+            "• `/read test_downloads` - 发送测试下载目录中的文件\n"
+            "• `/read learning_notes` - 发送学习笔记\n"
+            "• `/read output` - 发送输出目录中的文件\n"
+            "• `/read` - 发送项目根目录下所有生成的文件",
+            parse_mode="Markdown"
+        )
+        return
+
+    # Get directory path
+    dir_path_str = args[0] if len(args) >= 1 else "所有目录"
+
+    # Determine directory
+    dir_mapping = {
+        "test_downloads": PROJECT_ROOT / "test_downloads",
+        "downloaded_videos": PROJECT_ROOT / "downloaded_videos",
+        "output": PROJECT_ROOT / "output",
+        "MediaCrawler": PROJECT_ROOT / "MediaCrawler",
+        "learning_notes": PROJECT_ROOT / "learning_notes",
+        "bili_comments": PROJECT_ROOT / "bili_comments_output",
+        "xhs_comments": PROJECT_ROOT / "xhs_comments_output",
+        "xhs_analysis": PROJECT_ROOT / "xhs_analysis",
+        "xhs_images": PROJECT_ROOT / "xhs_images",
+    }
+
+    if dir_path_str == "所有目录":
+        # Read all output directories
+        search_dirs = list(dir_mapping.values())
+    else:
+        if dir_path_str not in dir_mapping:
+            await update.message.reply_text(
+                f"❌ 未知的目录: `{dir_path_str}`\n\n"
+                f"可用目录:\n"
+                f"{', '.join(dir_mapping.keys())}",
+                parse_mode="Markdown"
+            )
+            return
+        search_dirs = [dir_mapping.get(dir_path_str)]
+
+    # Find and send files
+    found_files = []
+    for dir_path in search_dirs:
+        if not dir_path.exists():
+            continue
+
+        for file in dir_path.rglob("*"):
+            if file.is_file():
+                size = file.stat().st_size
+                size_mb = size / 1024 / 1024
+                size_str = f"{size_mb:.2f} MB" if size_mb >= 1 else f"{size_mb*1024:.0f} KB"
+                file_type = get_file_type(file)
+
+                found_files.append({
+                    "path": str(file),
+                    "name": file.name,
+                    "type": file_type,
+                    "size_str": size_str
+                })
+
+    if not found_files:
+        await update.message.reply_text(f"❌ 目录 `{dir_path_str}` 中没有找到文件", parse_mode="Markdown")
+        return
+
+    await update.message.reply_text(
+        f"📂 找到 **{len(found_files)}** 个文件\n\n"
+        f"正在发送..."
+    )
+
+    # Send all files with bold text
+    sent_count = 0
+    for file_info in found_files[:10]:  # Send max 10 files at a time
+        file_path = Path(file_info["path"])
+        try:
+            with open(file_path, "rb") as f:
+                # Send with bold caption
+                caption = f"**{file_info['type']}** - {file_info['name']} ({file_info['size_str']})"
+                await update.effective_message.reply_document(
+                    document=f,
+                    filename=file_info["name"],
+                    caption=caption,
+                    disable_content_type_check=False
+                )
+                sent_count += 1
+        except Exception as e:
+            await update.message.reply_text(f"⚠️ 发送文件失败: {file_info['name']}\n错误: {str(e)}")
+
+    if sent_count < len(found_files):
+        await update.message.reply_text(
+            f"⏳ 继续发送剩余 {len(found_files) - sent_count} 个文件..."
+        )
+        sent_count += 0
+
+    # Send remaining files
+    for file_info in found_files[sent_count:]:
+        file_path = Path(file_info["path"])
+        try:
+            with open(file_path, "rb") as f:
+                caption = f"**{file_info['type']}** - {file_info['name']} ({file_info['size_str']})"
+                await update.effective_message.reply_document(
+                    document=f,
+                    filename=file_info["name"],
+                    caption=caption,
+                    disable_content_type_check=False
+                )
+        except Exception as e:
+            await update.message.reply_text(f"⚠️ 发送文件失败: {file_info['name']}\n错误: {str(e)}")
+
+    await update.message.reply_text(
+        f"✅ 完成！共发送 {len(found_files)} 个文件\n\n"
+        f"可以用 `/ask` 继续其他操作"
+    )
