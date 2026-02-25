@@ -1,5 +1,0 @@
-{
-  "bot_token": "YOUR_BOT_TOKEN_HERE",
-  "allowed_users": [],
-  "_comment": "从 @BotFather 获取 Bot Token，allowed_users 留空则允许所有人使用"
-}
