@@ -629,21 +629,64 @@ async def parse_file_selection(user_input: str, available_files: List[Dict]) -> 
 
 async def send_selected_files(update: Update, context: ContextTypes.DEFAULT_TYPE,
                            file_indices: List[int], available_files: List[Dict]):
-    """Send selected files to user"""
+    """Send selected files to user with JSON file handling"""
     for idx in file_indices:
         if idx < len(available_files):
             file_info = available_files[idx]
             file_path = Path(file_info["path"])
+            file_name = file_info["name"]
+            file_ext = file_name.lower().split('.')[-1] if '.' in file_name else ''
 
             if file_path.exists():
                 try:
-                    with open(file_path, "rb") as f:
-                        await context.bot.send_document(
-                            chat_id=update.effective_chat.id,
-                            document=f,
-                            filename=file_info["name"],
-                            caption=f"{file_info['type']} - {file_info['size_str']}"
-                        )
+                    # Check if it's a JSON file
+                    if file_ext == 'json':
+                        # Read JSON as text
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            json_content = f.read()
+
+                        # If JSON is small (< 4000 chars), send as text message
+                        if len(json_content) < 4000:
+                            # Format for better readability
+                            formatted_json = json.dumps(json.loads(json_content), ensure_ascii=False, indent=2)
+
+                            await context.bot.send_message(
+                                chat_id=update.effective_chat.id,
+                                text=f"📄 **JSON文件**\n\n"
+                                    f"**文件名**: {file_info['name']}\n"
+                                    f"**大小**: {file_info['size_str']}\n"
+                                    f"---\n"
+                                    f"```json\n{formatted_json}\n```"
+                            )
+                        else:
+                            # Split into chunks and send multiple messages
+                            chunk_size = 3500  # Leave room for headers
+                            chunks = [json_content[i:i+chunk_size]
+                                     for i in range(0, len(json_content), chunk_size)]
+
+                            await context.bot.send_message(
+                                chat_id=update.effective_chat.id,
+                                text=f"📄 **JSON文件 (分片发送)**\n\n"
+                                    f"**文件名**: {file_info['name']}\n"
+                                    f"**大小**: {file_info['size_str']}\n"
+                                    f"**总长度**: {len(json_content):,} 字符\n"
+                                    f"**分**: {len(chunks)} 部分"
+                            )
+
+                            for i, chunk in enumerate(chunks, 1):
+                                await context.bot.send_message(
+                                    chat_id=update.effective_chat.id,
+                                    text=f"📄 第 {i}/{len(chunks)} 部分：\n\n```json\n{chunk}\n```"
+                                )
+                    else:
+                        # Non-JSON file, send as document
+                        with open(file_path, "rb") as f:
+                            await context.bot.send_document(
+                                chat_id=update.effective_chat.id,
+                                document=f,
+                                filename=file_info["name"],
+                                caption=f"{file_info['type']} - {file_info['size_str']}"
+                            )
                 except Exception as e:
                     await context.bot.send_message(
                         chat_id=update.effective_chat.id,
@@ -726,7 +769,47 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 🛑 **停止运行**
 `/stop` - 停止当前正在运行的命令
 
+📄 **读取文件**
+`/read` - 读取已生成的文件内容
+用法：
+  • `/read` - 列出所有可读取的文件
+  • `/read 文件编号` - 读取指定文件
+  • `/read 文件名` - 按名称查找文件（支持模糊搜索）
+
 📝 **示例对话**
+
+示例 3 - 文件读取：
+```
+你: /ask 爬取评论
+Bot: ✅ 执行完成！
+     我生成了以下文件：
+     1. 视频字幕 SRT 文件 (2.3 MB)
+     2. AI 分析报告 (15 KB)
+     3. 评论数据 JSON (450 KB)
+
+     你想要哪些？可以：
+     • 全部发送
+     • 只要特定类型（如'只要文档'）
+     • 指定文件编号
+
+     用自然语言回复即可
+
+你: /read 1
+Bot: 📄 **文档文件**
+     **文件名**: 视频字幕 SRT 文件
+     **大小**: 2.3 MB
+     ---
+     [文件内容...]
+
+你: /read AI分析报告
+Bot: 📄 **文档文件**
+     **文件名**: AI 分析报告
+     **大小**: 15 KB
+     ---
+     [AI分析内容...]
+```
+
+示例 4 - 文件选择：
 
 示例 1 - 基础操作：
 ```
@@ -787,6 +870,132 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(help_text, parse_mode="Markdown")
 
 
+async def cmd_read_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Read file content command"""
+    user_id = update.effective_user.id
+
+    # Check user authorization
+    if ALLOWED_USERS and user_id not in ALLOWED_USERS:
+        await update.message.reply_text("❌ 未授权用户")
+        return
+
+    # Get user input from chatbox or command args
+    # Priority: full_message (chatbox) > args_input (command)
+
+    user_input = ""
+    # Check if user sent a message in chatbox (reply_to_message)
+    if update.message and hasattr(update.message, 'reply_to_message'):
+        user_input = update.message.text
+    elif update.message and hasattr(update.message, 'text'):
+        # Regular message in chatbox
+        user_input = update.message.text
+
+    # If no chatbox message, use command args
+    if not user_input:
+        user_input = " ".join(context.args) if context.args else ""
+
+    if not user_input:
+        # List available files from state
+        state = get_user_state(user_id)
+        if not state.generated_files:
+            await update.message.reply_text(
+                "ℹ️ 你当前没有可读取的文件。\n\n"
+                "请先执行一个命令生成文件，然后就可以读取了。"
+            )
+            return
+
+        # Show file list
+        file_list = "\n".join(
+            f"{i+1}. {f['name']} ({f['type']}, {f['size_str']})"
+            for i, f in enumerate(state.generated_files)
+        )
+
+        await update.message.reply_text(
+            f"📂 **可读取的文件**\n\n{file_list}\n\n"
+            f"💡 使用方法：\n"
+            f"`/read 文件编号`\n\n"
+            f"例如：`/read 1` 读取第1个文件"
+        )
+
+    # User specified a file number
+    if user_input.isdigit():
+        file_num = int(user_input) - 1  # Convert to 0-based index
+
+        if file_num < 0 or file_num >= len(state.generated_files):
+            await update.message.reply_text(f"❌ 无效的文件编号，请选择 1-{len(state.generated_files)} 之间的数字")
+            return
+
+        # Read the file
+        file_info = state.generated_files[file_num]
+        file_path = Path(file_info["path"])
+
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+
+            # Limit content for Telegram message (max 4000 chars)
+            if len(content) > 4000:
+                content = content[:3800] + "\n\n...(内容过长，已截断，完整内容请查看文件)"
+
+            # Determine content type
+            file_type = file_info.get("type", "文件")
+
+            await update.message.reply_text(
+                f"📄 **{file_type}**\n\n"
+                f"**文件名**: {file_info['name']}\n"
+                f"**大小**: {file_info['size_str']}\n\n"
+                f"---\n\n{content}",
+                parse_mode="Markdown"
+            )
+
+        except FileNotFoundError:
+            await update.message.reply_text(f"❌ 文件不存在: {file_info['name']}")
+        except Exception as e:
+            await update.message.reply_text(f"❌ 读取文件时出错: {str(e)}")
+
+
+async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show all generated files"""
+    user_id = update.effective_user.id
+
+    # Check user authorization
+    if ALLOWED_USERS and user_id not in ALLOWED_USERS:
+        await update.message.reply_text("❌ 未授权用户")
+        return
+
+    # Get user state
+    state = get_user_state(user_id)
+
+    if not state.generated_files:
+        await update.message.reply_text(
+            "ℹ️ 你当前没有可查看的文件列表。\n\n"
+            "💡 提示：\n"
+            "• 请先执行一个命令（如 `/ask 刷小红书推荐`）生成文件\n"
+            "• 使用 `/read 文件编号` 来读取和发送文件内容\n"
+        )
+        return
+
+    # Show all files
+    file_list = "\n".join(
+        f"{i+1}. {f['name']} ({f['type']}, {f['size_str']})"
+        for i, f in enumerate(state.generated_files)
+    )
+
+    await update.message.reply_text(
+        f"📋 **生成的文件列表**\n\n{file_list}\n\n"
+        f"**使用方法**\n"
+        f"• `/read 文件编号` - 读取并并发送第N个文件\n"
+        f"• `/read 文件名` - 按名称查找文件\n"
+        f"• `/read AI分析报告` - 读取最近AI报告\n"
+        f"• `/read 继续` - 继续读取下一个文件\n"
+        f"• `/read 全部` - 发送所有文件\n"
+        f"• `/history` - 查看对话历史\n"
+        )
+
+    # Update help text to include /history command
+    state.clear()
+
+
 async def cmd_ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Process conversational /ask command"""
     user_id = update.effective_user.id
@@ -799,7 +1008,7 @@ async def cmd_ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Get user input
     user_input = " ".join(context.args) if context.args else ""
     if not user_input:
-        await update.message.reply_text("❌ 请提供你想做什么\n\n用法: `/ask 你想做什么`", parse_mode="Markdown")
+        await update.message.reply_text("❌ 请提供你想做什么\n\n用法: `/ask 你想做什么`")
         return
 
     state = get_user_state(user_id)
@@ -823,19 +1032,19 @@ async def cmd_ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Add user input to history
     state.history.append(user_input)
 
-    await update.message.reply_text(f"🧠 理解中：`{user_input}`", parse_mode="Markdown", timeout=10)
+    await update.message.reply_text(f"🧠 理解中：`{user_input}`", parse_mode="Markdown")
 
     # Call Gemini
     result = await chat_with_gemini(user_input, state.history)
 
     if result.get("mode") == "error":
-        await update.message.reply_text(f"❌ {result.get('response', '未知错误')}", timeout=10)
+        await update.message.reply_text(f"❌ {result.get('response', '未知错误')}")
         return
 
     # Dialogue mode - Gemini asking question
     if result.get("mode") == "dialogue":
         response = result.get("response", "")
-        await update.message.reply_text(response, timeout=10)
+        await update.message.reply_text(response)
         return
 
     # Confirm mode - Ready to execute
@@ -847,7 +1056,7 @@ async def cmd_ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Validate command
         if command not in COMMAND_MAP:
-            await update.message.reply_text(f"❌ 命令 `{command}` 不在可用列表中", timeout=10)
+            await update.message.reply_text(f"❌ 命令 `{command}` 不在可用列表中")
             return
 
         # Save pending command
@@ -959,10 +1168,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             set_user_process(user_id, process)
             state.process = process
 
-            # Wait for process to complete (this allows stopping via /stop)
-            await process.wait()
-
-            # Read output after process completes
+            # Read output and wait for process to complete
+            # communicate() waits for the process and returns (stdout, stderr)
             stdout, stderr = await process.communicate()
 
             stdout_text = (stdout.decode('utf-8', errors='replace') if stdout else '')
@@ -1056,8 +1263,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.message.reply_text(
                     f"{error_msg}\n\n"
                     f"💡 如需继续执行，请发送 `/ask 继续`\n"
-                    f"我会询问你是否要重新执行命令。",
-                    timeout=10
+                    f"我会询问你是否要重新执行命令。"
                 )
 
                 # Don't clear state - keep it so user can continue with /ask
@@ -1069,22 +1275,21 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass  # Query might be too old
             try:
-                await query.message.reply_text("⏰ 执行超时，请重试", timeout=5)
+                await query.message.reply_text("⏰ 执行超时，请重试")
             except Exception:
                 pass
             clear_user_process(user_id)
             state.process = None
             # Don't clear state - let user decide with /ask
             # state.clear()  # REMOVED
-        except asyncio.TimeoutError:
+        except Exception as e:
             error_msg = f"❌ 执行错误: {str(e)}"
             # Handle query expired errors gracefully
             if "Query is too old" in str(e) or "response timeout" in str(e):
                 # Query expired, try to send new message instead
                 try:
                     await query.message.reply_text(
-                        f"⚠️ 确认按钮已过期，请重新执行命令。\n\n错误详情: {str(e)}",
-                        timeout=5
+                        f"⚠️ 确认按钮已过期，请重新执行命令。\n\n错误详情: {str(e)}"
                     )
                 except Exception:
                     # If that also fails, just log
@@ -1096,7 +1301,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except Exception:
                     # Query might be too old, try message.reply_text
                     try:
-                        await query.message.reply_text(error_msg[:4000], timeout=5)
+                        await query.message.reply_text(error_msg[:4000])
                     except Exception:
                         pass
 
@@ -1149,6 +1354,8 @@ def main():
     # Register commands
     application.add_handler(CommandHandler("start", cmd_start))
     application.add_handler(CommandHandler("ask", cmd_ask))
+    application.add_handler(CommandHandler("read", cmd_read_file))
+    application.add_handler(CommandHandler("history", cmd_history))
     application.add_handler(CommandHandler("stop", cmd_stop))
     application.add_handler(CommandHandler("help", cmd_start))
     application.add_handler(CallbackQueryHandler(button_callback))

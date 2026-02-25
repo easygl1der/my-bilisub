@@ -1,15 +1,20 @@
+# ==================== BiliSub 核心依赖 ====================
+
 # 视频下载和处理
 yt-dlp>=2023.0.0
 requests>=2.25.0
+
+# 网页解析
 beautifulsoup4>=4.12.0
+parsel>=1.9.1
 
 # 语音识别 (Whisper)
 openai-whisper>=20230918
 torch>=2.0.0
 torchaudio>=2.0.0
 
-# 字幕优化
-tenacity>=8.0.0
+# 重试机制
+tenacity>=8.2.0
 
 # 进度显示
 tqdm>=4.60.0
@@ -21,10 +26,18 @@ bilibili-api-python>=17.1.0
 pandas>=2.0.0
 numpy>=1.24.0
 
-# 异步支持
-aiohttp>=3.8.0
+# ==================== 异步和网络 ====================
 
-# API 服务
+# 异步 HTTP
+aiohttp>=3.8.0
+httpx>=0.24.0
+
+# 异步文件 I/O
+aiofiles>=23.2.1
+
+# ==================== API 服务 ====================
+
+# FastAPI
 fastapi>=0.100.0
 uvicorn>=0.22.0
 pydantic>=2.0.0
@@ -32,42 +45,93 @@ python-multipart>=0.0.6
 starlette>=0.27.0
 email-validator>=2.0.0
 
-# Gemini AI 视频分析
+# Flask (用于某些 Web 服务)
+flask>=2.3.0
+flask-cors>=4.0.0
+
+# ==================== AI/LLM SDK ====================
+
+# Gemini AI (旧 SDK)
 google-generativeai>=0.8.0
 
-# Telegram Bot
+# Gemini AI (新 SDK)
+google-genai>=1.0.0
+
+# ==================== Telegram Bot ====================
+
 python-telegram-bot>=21.0
 
-# 浏览器自动化 (B站首页采集)
+# ==================== 浏览器自动化 ====================
+
 playwright>=1.40.0
 selenium>=4.15.0
 webdriver-manager>=4.0.1
 
-# MediaCrawler 依赖
-sqlalchemy>=2.0.43
-httpx>=0.24.0
-openpyxl>=3.1.2
-aiofiles>=23.2.1
-aiosqlite>=0.21.0
-cryptography>=45.0.7
-jieba>=0.42.1
+# ==================== OCR 和图像处理 ====================
+
+# OpenCV
 opencv-python>=4.11.0
-parsel>=1.9.1
+
+# Pillow
 pillow>=9.5.0
-pyexecjs>=1.5.1
-python-dotenv>=1.0.1
+
+# RapidOCR (跨平台 OCR)
+rapidocr-onnxruntime>=1.1.0
+
+# ==================== 数据库 ====================
+
+# SQLAlchemy
+sqlalchemy>=2.0.43
+
+# SQLite 异步支持
+aiosqlite>=0.21.0
+
+# MongoDB 异步支持
+motor>=3.3.0
+
+# MySQL 异步支持
+aiomysql>=0.2.0
+
+# Excel 支持
+openpyxl>=3.1.2
+
+# ==================== 缓存和存储 ====================
+
+# Redis
 redis>=4.6.0
-tenacity>=8.2.2
-typer>=0.12.3
+
+# ==================== 文本处理 ====================
+
+# 中文分词
+jieba>=0.42.1
+
+# 词云生成
 wordcloud>=1.9.3
-websockets>=15.0.1
+matplotlib>=3.7.0
 
-# Gemini AI 新 SDK
-google-genai>=1.0.0
+# ==================== 工具库 ====================
 
-# 可选: OCR功能 (需要额外安装)
+# 命令行工具
+typer>=0.12.3
+
+# 加密
+cryptography>=45.0.7
+
+# 环境变量管理
+python-dotenv>=1.0.1
+
+# JavaScript 执行
+pyexecjs>=1.5.1
+
+# YAML 解析
+pyyaml>=6.0
+
+# ==================== 测试 ====================
+
+pytest>=7.4.0
+
+# ==================== 可选依赖 ====================
+
+# PaddleOCR (需要额外安装，Windows 可能有兼容性问题)
 # paddleocr>=2.7.0
 # paddlepaddle>=2.6.0
-
-# 视频学习笔记生成器
-# opencv-python>=4.8.0  # 已在上面包含
