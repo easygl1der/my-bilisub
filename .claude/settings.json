@@ -13,7 +13,9 @@
       "Bash(timeout:*)",
       "Read(//c/Users/28024/AppData/Local/Temp/claude/d-----biliSub/tasks//**)",
       "Bash(PYTHONIOENCODING=utf-8 /e/Anaconda/envs/bilisub/python.exe:*)",
-      "Bash(sort:*)"
+      "Bash(sort:*)",
+      "Bash(find:*)",
+      "Bash(git checkout:*)"
     ],
     "additionalDirectories": [
       "D:\\桌面\\biliSub\\output\\subtitles",

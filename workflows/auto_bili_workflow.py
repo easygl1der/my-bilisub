@@ -570,6 +570,8 @@ def extract_uid_from_url(url: str) -> str:
 
 def extract_bvid_from_url(url: str) -> str:
     """从B站视频链接中提取BV号"""
+    import requests
+
     try:
         # 移除查询参数
         if '?' in url:
@@ -585,8 +587,27 @@ def extract_bvid_from_url(url: str) -> str:
             match = re.search(pattern, url)
             if match:
                 return 'BV' + match.group(1)
-    except Exception:
-        pass
+
+        # 如果没有匹配，尝试通过 HTTP 请求获取重定向后的 URL（针对短链接如 b23.tv/xxxx）
+        # b23.tv 短链接会重定向到真实 URL
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Referer': 'https://www.bilibili.com/',
+            }
+            response = requests.get(url, headers=headers, timeout=10, allow_redirects=True)
+            final_url = response.url  # 获取重定向后的最终 URL
+
+            # 从重定向后的 URL 中提取 BV 号
+            for pattern in patterns:
+                match = re.search(pattern, final_url)
+                if match:
+                    print(f"🔗 短链接重定向: {url} -> {final_url}")
+                    return 'BV' + match.group(1)
+        except Exception as e:
+            print(f"⚠️ HTTP 请求失败: {e}")
+    except Exception as e:
+        print(f"⚠️ 提取 BV 号时出错: {e}")
     return None
 
 

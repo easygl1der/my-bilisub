@@ -16,6 +16,8 @@ B站用法:
     # 下载视频（默认）
     python auto_content_workflow.py "https://www.bilibili.com/video/BV1UPZtBiEFS"
 
+    python auto_content_workflow.py "https://b23.tv/u5PQcMC"
+
     # 提取字幕 + AI 分析
     python auto_content_workflow.py "https://www.bilibili.com/video/BV1UPZtBiEFS" --bili-mode subtitle
 
@@ -147,8 +149,31 @@ def generate_video_notes(video_path: Path, model: str = 'flash-lite',
     # 如果 upload_github 为 False，视频ToNotes 内部会使用本地图片
     # 所以这里不需要额外参数
 
-    result = subprocess.run(cmd, cwd=SCRIPT_DIR)
-    return result.returncode == 0
+    # 运行命令并捕获输出
+    result = subprocess.run(
+        cmd,
+        cwd=SCRIPT_DIR,
+        capture_output=True,
+        text=True,
+        encoding='utf-8'
+    )
+
+    # 显示输出（如果有）
+    if result.stdout:
+        print(result.stdout)
+
+    # 如果有错误，显示错误输出
+    if result.stderr:
+        print(result.stderr)
+
+    # 返回是否成功
+    success = result.returncode == 0
+    if not success:
+        print(f"❌ 学习笔记生成失败 (退出码: {result.returncode})")
+    else:
+        print("✅ 学习笔记生成成功")
+
+    return success
 
 
 def is_xhs_video(url: str) -> bool:
@@ -384,10 +409,11 @@ def main():
             if 'video_file' in locals() and video_file:
                 video_path = video_file
             else:
-                # 查找最近下载的视频文件
-                output_path = Path(args.output) if args.output else Path("test_downloads")
+                # 查找最近下载的视频文件（使用正确的路径：downloaded_videos/bilibili）
+                output_path = Path(args.output) if args.output else Path("downloaded_videos/bilibili")
                 if output_path.exists():
-                    video_files = list(output_path.glob("*.mp4"))
+                    # 递归查找 mp4 文件（包括 UP 主子目录）
+                    video_files = list(output_path.rglob("*.mp4"))
                     video_files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
                     if video_files:
                         video_path = video_files[0]

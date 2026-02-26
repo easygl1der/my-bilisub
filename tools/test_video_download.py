@@ -122,8 +122,12 @@ def get_video_info(url: str) -> dict:
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
-        'extract_flat': True,
     }
+
+    # 对于短链接（如 b23.tv），不使用 extract_flat，以便正确解析视频 ID
+    # b23.tv 链接需要完整解析来获取正确的 BV 号（不带 _p1 后缀）
+    if platform not in ('bilibili',):
+        ydl_opts['extract_flat'] = True
 
     # 添加平台特定配置
     if platform == 'bilibili':

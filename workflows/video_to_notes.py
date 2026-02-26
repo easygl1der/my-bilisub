@@ -1634,7 +1634,7 @@ def main():
 
     if not args.file:
         parser.print_help()
-        return
+        return 1
 
     # 处理
     result = generate_note(
@@ -1648,9 +1648,15 @@ def main():
 
     if result.get('success'):
         print(f"\n✅ 完成!")
+        # 返回生成的文件路径信息
+        output_file = result.get('output_file')
+        if output_file:
+            print(f"📁 输出文件: {output_file}")
+        return 0
     else:
         print(f"\n❌ 失败: {result.get('error')}")
+        return 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
