@@ -10,13 +10,13 @@ AI自动刷B站首页并总结
 
 使用示例:
     # 默认配置（刷新3次，最多50个视频）
-    python ai_bilibili_homepage.py
+    python workflows/ai_bilibili_homepage.py
 
     # 仅采集，生成CSV
-    python ai_bilibili_homepage.py --mode scrape
+    python workflows/ai_bilibili_homepage.py --mode scrape
 
     # 采集+提取字幕
-    python ai_bilibili_homepage.py --mode scrape+subtitle
+    python workflows/ai_bilibili_homepage.py --mode scrape+subtitle
 
     # 完整流程（采集+字幕+AI）
     python ai_bilibili_homepage.py --mode full --model flash-lite

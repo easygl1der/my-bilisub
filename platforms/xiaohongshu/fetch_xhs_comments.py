@@ -5,7 +5,7 @@
 功能：
 1. 使用 Cookie 直接访问笔记页面
 2. 从 HTML 中提取所有评论（单层扁平）
-3. 在 Python 端按“回复 XXX : …”规则构建评论-回复树
+3. 在 Python 端按"回复 XXX : …"规则构建评论-回复树
 4. 输出 JSON：每条顶级评论 + replies（不重复自己）
 
 使用方法:
@@ -170,8 +170,20 @@ def build_extract_js(root_cls: str) -> str:
         var content = findContent(item);
         if (!content || content.length < 1) return null;
 
+        // 查找父评论ID（支持多种属性格式）
+        var parentCommentId = item.getAttribute("data-parent-id")
+                        || item.getAttribute("data-reply-to")
+                        || item.getAttribute("data-root-id")
+                        || "";
+
+        // 查找被回复者昵称（支持多种格式）
+        var replyToEl = item.querySelector("[class*='reply-to'], [class*='at'], [class*='mention']");
+        var replyToName = replyToEl ? replyToEl.textContent.replace(/@/g, '').trim() : "";
+
         return {{
             id:          commentId,
+            parent_id:   parentCommentId,
+            reply_to_name: replyToName,
             nickname:    findAuthor(item),
             content:     content,
             like_count:  findLikes(item),
@@ -296,9 +308,18 @@ class XHSCommentExtractor:
 
     def build_comment_tree(self, comments):
         """
-        用文本规则识别“回复 XXX : …”，构造树结构。
-        comments: [{id, nickname, content, like_count, create_time}]
+        构建多层嵌套评论树
+
+        支持:
+        - 基于 parent_id 的直接关系（优先）
+        - 基于 reply_to_name 的间接关系（回退）
+        - 基于文本规则识别"回复 XXX : …"（最后回退）
+
+        comments: [{id, parent_id, reply_to_name, nickname, content, like_count, create_time}]
         """
+        # 构建ID到评论的映射
+        id2node: dict[str, dict] = {c['id']: c for c in comments}
+
         # 作者 -> 点赞最高的那条评论（作为被回复 anchor）
         by_author: dict[str, dict] = {}
         for c in comments:
@@ -306,52 +327,56 @@ class XHSCommentExtractor:
             if name not in by_author or c["like_count"] > by_author[name]["like_count"]:
                 by_author[name] = c
 
-        # 初始全部当顶级
-        id2node: dict[str, dict] = {}
-        roots: list[dict] = []
+        # 初始化所有评论的replies
         for c in comments:
-            node = {
-                "id": c["id"],
-                "nickname": c["nickname"],
-                "content": c["content"],
-                "like_count": c["like_count"],
-                "create_time": c["create_time"],
-                "replies": [],
-            }
-            id2node[c["id"]] = node
-            roots.append(node)
+            c['replies'] = []
 
-        # 识别“回复 XXX : …”
-        reply_pattern = re.compile(r"^回复\s+(.+?)\s*[:：]")
+        # 构建树结构
+        roots = []
+        for c in comments:
+            parent_id = c.get('parent_id', '')
 
-        for node in list(roots):  # roots 会被修改，拷贝一份
-            m = reply_pattern.match(node["content"])
-            if not m:
-                continue
-            target_name = m.group(1).strip()
-
-            # 避免自己回复自己（这种通常是单纯引用）
-            if target_name == node["nickname"]:
+            # 优先：基于parent_id构建直接关系
+            if parent_id and parent_id in id2node:
+                id2node[parent_id]['replies'].append(c)
                 continue
 
-            anchor = by_author.get(target_name)
-            if not anchor:
-                continue
+            # 回退：基于reply_to_name构建（当parent_id不可用时）
+            reply_to_name = c.get('reply_to_name', '')
+            if reply_to_name:
+                # 找到该作者的评论中点赞最高的作为父评论
+                candidates = [n for n in comments if n['nickname'] == reply_to_name]
+                if candidates:
+                    best_parent = max(candidates, key=lambda x: x['like_count'])
+                    best_parent['replies'].append(c)
+                    continue
 
-            parent = id2node.get(anchor["id"])
-            if not parent:
-                continue
+            # 最后回退：基于文本规则识别"回复 XXX : …"
+            reply_pattern = re.compile(r"^回复\s+(.+?)\s*[:：]")
+            m = reply_pattern.match(c.get("content", ""))
+            if m:
+                target_name = m.group(1).strip()
+                # 避免自己回复自己
+                if target_name != c["nickname"]:
+                    anchor = by_author.get(target_name)
+                    if anchor:
+                        anchor['replies'].append(c)
+                        continue
 
-            if node in roots:
-                roots.remove(node)
-            parent["replies"].append(node)
+            # 既没有parent_id也没有reply_to_name也没有匹配文本，作为顶级评论
+            roots.append(c)
 
-        # 排序：顶级按点赞，回复内部按点赞
-        roots.sort(key=lambda x: x["like_count"], reverse=True)
+        # 递归排序所有回复
         for r in roots:
-            r["replies"].sort(key=lambda x: x["like_count"], reverse=True)
+            self._sort_replies(r)
 
         return roots
+
+    def _sort_replies(self, node):
+        """递归排序所有回复"""
+        node['replies'].sort(key=lambda x: x['like_count'], reverse=True)
+        for reply in node['replies']:
+            self._sort_replies(reply)
 
     def save_json(self, tree, total):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -452,7 +477,7 @@ async def main_async(url: str | None = None, headless: bool = False):
                 await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                 await asyncio.sleep(1.5)
 
-                # 安全点击“展开/更多回复”，避免误点 a 链接
+                # 安全点击"展开/更多回复"，避免误点 a 链接
                 try:
                     clicked = await page.evaluate(
                         r"""

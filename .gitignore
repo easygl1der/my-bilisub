@@ -34,3 +34,4 @@ downloaded_videos/
 *.mp4
 *.mp4.part
 一键下载.bat
+".worktrees/" 

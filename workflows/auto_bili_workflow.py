@@ -9,10 +9,10 @@ B站视频自动化工作流程
 
 使用示例:
     # 基本用法 - 获取最新10个视频并完成全部流程
-    python workflows/auto_bili_workflow.py --url "https://space.bilibili.com/3546607314274766" --count 10
+    python workflows/auto_bili_workflow.py --url "https://space.bilibili.com/492139282/?spm_id_from=333.788.upinfo.head.click" --count 10
 
     # 新增：直接分析单个视频链接
-    python workflows/auto_bili_workflow.py --video-url "https://www.bilibili.com/video/BV1xxxx"
+    python workflows/auto_bili_workflow.py --video-url "https://www.bilibili.com/video/BV1mWieBhEtL/?-Arouter=story&buvid=YA4FA8AEA282F4DF42C7B0BC2CF09F0E55E1&from_spmid=tm.recommend.0.0&is_story_h5=true&mid=2UYYhXDIEUl4rvxj5J2NjQ%3D%3D&plat_id=163&share_from=ugc&share_medium=iphone&share_plat=ios&share_session_id=453D5E23-4600-41B1-A416-DE1722D052DA&share_source=COPY&share_tag=s_i&spmid=main.ugc-video-detail-vertical.0.0&timestamp=1772040421&unique_k=u5PQcMC&up_id=492139282&vd_source=b55594d2ba73cdd7666e94ca2cf2fe93&spm_id_from=333.788.videopod.sections"
 
     # 新增：分析单个视频并指定模型
     python workflows/auto_bili_workflow.py --video-url "https://www.bilibili.com/video/BV1xxxx" --model flash

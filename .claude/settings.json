@@ -15,11 +15,23 @@
       "Bash(PYTHONIOENCODING=utf-8 /e/Anaconda/envs/bilisub/python.exe:*)",
       "Bash(sort:*)",
       "Bash(find:*)",
-      "Bash(git checkout:*)"
+      "Bash(git checkout:*)",
+      "Bash(python3:*)",
+      "Bash(git restore:*)",
+      "Bash(where python)",
+      "Bash(taskkill:*)",
+      "Bash(E:\\\\Anaconda\\\\Scripts\\\\conda.exe install:*)",
+      "Bash(D:/anaconda3/envs/bilisub/python.exe:*)",
+      "Bash(E:/Anaconda/python.exe bots/help-bot.py)",
+      "Bash(E:/Anaconda/python.exe -m py_compile:*)",
+      "Bash(cmd /c:*)",
+      "WebFetch(domain:minimax-algeng-chat-tts.oss-cn-wulanchabu.aliyuncs.com)",
+      "Bash(chcp:*)"
     ],
     "additionalDirectories": [
       "D:\\桌面\\biliSub\\output\\subtitles",
-      "D:\\桌面\\biliSub\\test_downloads"
+      "D:\\桌面\\biliSub\\test_downloads",
+      "C:\\Users\\28024\\.claude\\plans"
     ]
   }
 }

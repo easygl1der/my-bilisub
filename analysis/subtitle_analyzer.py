@@ -491,6 +491,7 @@ def analyze_subtitle_file(srt_file: Path, output_dir: Path, model: str = 'flash-
 
     if not written_script_result['success']:
         return {
+            'success': False,
             'title': title,
             'srt_file': srt_file.name,
             'error': written_script_result.get('error', '书面文稿生成失败'),
@@ -713,6 +714,70 @@ def main():
         if success_count > 0:
             print(f"  总Token: {total_tokens:,}")
             print(f"  平均Token: {total_tokens//success_count:,}")
+
+
+def process_subtitles(subtitle_dir: str, model: str = 'flash-lite', max_workers: int = 3,
+                     incremental: bool = False, append: bool = False) -> None:
+    """
+    处理字幕目录，生成AI摘要报告 (供外部调用)
+
+    Args:
+        subtitle_dir: 字幕目录路径
+        model: Gemini模型 (flash-lite, flash, pro)
+        max_workers: 并发数 (当前版本未使用)
+        incremental: 增量模式，跳过已处理的视频
+        append: 追加模式 (当前版本未使用)
+    """
+    from pathlib import Path as PathLib
+
+    subtitle_path = PathLib(subtitle_dir)
+    if not subtitle_path.exists():
+        print(f"❌ 文件夹不存在: {subtitle_dir}")
+        return
+
+    # 查找所有 SRT 文件
+    srt_files = list(subtitle_path.glob("*.srt"))
+    if not srt_files:
+        print(f"❌ 未找到 SRT 文件: {subtitle_dir}")
+        return
+
+    print(f"📁 找到 {len(srt_files)} 个字幕文件")
+    print(f"🤖 使用模型: {model}")
+    if incremental:
+        print(f"🔄 增量模式: 跳过已处理视频")
+
+    # 统计
+    success_count = 0
+    fail_count = 0
+    total_tokens = 0
+
+    # 输出目录 = 字幕目录的父目录
+    output_dir = subtitle_path.parent
+
+    # 分析每个文件
+    for srt_file in srt_files:
+        print(f"\n{'='*60}")
+        print(f"📝 正在分析: {srt_file.stem}")
+
+        result = analyze_subtitle_file(srt_file, output_dir, model)
+
+        if result['success']:
+            success_count += 1
+            total_tokens += result['tokens']
+            print(f"  ✅ 成功 - Token: {result['tokens']:,}")
+        else:
+            fail_count += 1
+            print(f"  ❌ 失败: {result.get('error', '未知错误')}")
+
+    # 最终统计
+    print(f"\n{'='*60}")
+    print(f"📊 所有文件分析完成!")
+    print(f"  总计: {len(srt_files)}")
+    print(f"  成功: {success_count}")
+    print(f"  失败: {fail_count}")
+    if success_count > 0:
+        print(f"  总Token: {total_tokens:,}")
+        print(f"  平均Token: {total_tokens//success_count:,}")
 
 
 if __name__ == "__main__":

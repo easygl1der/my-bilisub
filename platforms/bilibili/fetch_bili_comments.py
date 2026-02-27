@@ -187,7 +187,7 @@ class BiliCommentClient:
     def __init__(self):
         self.headers = get_headers()
 
-    def get_comments(self, video_id: str, max_count: int = 50, only_liked: bool = False) -> List[Dict]:
+    def get_comments(self, video_id: str, max_count: int = 500, only_liked: bool = False) -> List[Dict]:
         """获取视频最热评论
 
         Args:
@@ -213,10 +213,10 @@ class BiliCommentClient:
         else:
             oid = video_id
 
-        # 第一阶段：收集多页评论（默认爬取前10页）
+        # 第一阶段：收集多页评论（根据max_count动态计算页数）
         all_collected = []
         page = 1
-        max_pages_to_fetch = 10  # 最多爬取10页（约200条评论）
+        max_pages_to_fetch = (max_count + PAGE_SIZE - 1) // PAGE_SIZE  # 根据目标数量计算页数
         total_available = None
 
         print(f"\n   📥 第一阶段：收集评论...")
@@ -688,16 +688,16 @@ def main(url: str = None, count: int = None, output_format: str = "json", only_l
     elif is_interactive:
         # 交互式模式：询问用户
         try:
-            count_input = input("\n要爬取多少条最热评论? (留空表示50条，0表示全部收集的评论): ").strip()
+            count_input = input("\n要爬取多少条最热评论? (留空表示500条，0表示全部收集的评论): ").strip()
             if count_input == '':
-                max_count = 50  # 默认50条
+                max_count = 500  # 默认500条
             else:
                 max_count = int(count_input) if int(count_input) != 0 else None
         except:
-            max_count = 50
+            max_count = 500
     else:
-        # 命令行模式，未指定数量：默认50条
-        max_count = 50
+        # 命令行模式，未指定数量：默认500条
+        max_count = 500
 
     # 创建客户端
     client = BiliCommentClient()
@@ -751,7 +751,7 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="B站评论爬取工具（支持嵌套回复）")
     parser.add_argument("url", help="视频链接")
-    parser.add_argument("count", nargs="?", type=int, default=50, help="评论数量（默认 50 条最热评论，0 表示全部最热）")
+    parser.add_argument("count", nargs="?", type=int, default=500, help="评论数量（默认 500 条最热评论，0 表示全部最热）")
     parser.add_argument("-f", "--format", choices=["json", "md", "csv"], default="json",
                        help="输出格式：json（嵌套结构）、md（可读格式）、csv（扁平化），默认json")
     parser.add_argument("--only-liked", action="store_true",
